@@ -269,6 +269,9 @@ type SendPaymentRequest struct {
 
 	// If set, circular payments to self are permitted.
 	AllowSelfPayment bool
+
+	// Payment secret
+	PaymentAddr []byte
 }
 
 // InterceptedHtlc contains information about a htlc that was intercepted in
@@ -379,6 +382,7 @@ func (r *routerClient) SendPayment(ctx context.Context,
 		MaxParts:         request.MaxParts,
 		OutgoingChanIds:  request.OutgoingChanIds,
 		AllowSelfPayment: request.AllowSelfPayment,
+		PaymentAddr:      request.PaymentAddr,
 	}
 	if request.MaxCltv != nil {
 		rpcReq.CltvLimit = *request.MaxCltv
