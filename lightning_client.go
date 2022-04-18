@@ -198,6 +198,10 @@ type LightningClient interface {
 	RegisterRPCMiddleware(ctx context.Context, middlewareName,
 		customCaveatName string, readOnly bool, timeout time.Duration,
 		intercept InterceptFunction) (chan error, error)
+
+	// StopDaemon will send a shutdown request to the interrupt handler,
+	// triggering a graceful shutdown of the daemon.
+	StopDaemon(ctx context.Context) error
 }
 
 // Info contains info about the connected lnd node.
@@ -3722,4 +3726,18 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 	}()
 
 	return errChan, nil
+}
+
+// StopDaemon will send a shutdown request to the interrupt handler,
+// triggering a graceful shutdown of the daemon.
+func (s *lightningClient) StopDaemon(ctx context.Context) error {
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
+	rpcReq := &lnrpc.StopRequest{}
+
+	_, err := s.client.StopDaemon(rpcCtx, rpcReq)
+
+	return err
 }
