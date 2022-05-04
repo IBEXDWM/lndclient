@@ -198,6 +198,10 @@ type LightningClient interface {
 	RegisterRPCMiddleware(ctx context.Context, middlewareName,
 		customCaveatName string, readOnly bool, timeout time.Duration,
 		intercept InterceptFunction) (chan error, error)
+
+	// StopDaemon will send a shutdown request to the interrupt handler,
+	// triggering a graceful shutdown of the daemon.
+	StopDaemon(ctx context.Context) error
 }
 
 // Info contains info about the connected lnd node.
@@ -1364,11 +1368,12 @@ func (s *lightningClient) AddInvoice(ctx context.Context,
 	defer cancel()
 
 	rpcIn := &lnrpc.Invoice{
-		Memo:       in.Memo,
-		ValueMsat:  int64(in.Value),
-		Expiry:     in.Expiry,
-		CltvExpiry: in.CltvExpiry,
-		Private:    true,
+		Memo:            in.Memo,
+		ValueMsat:       int64(in.Value),
+		Expiry:          in.Expiry,
+		CltvExpiry:      in.CltvExpiry,
+		Private:         true,
+		DescriptionHash: in.DescriptionHash,
 	}
 
 	if in.Preimage != nil {
@@ -1778,6 +1783,9 @@ type WaitingCloseChannel struct {
 	//   - ChanStatusCoopBroadcasted|ChanStatusLocalCloseInitiator
 	//   - ChanStatusCoopBroadcasted|ChanStatusRemoteCloseInitiator
 	ChanStatusFlags string
+
+	// CloseTxid is the close transaction that's broadcast.
+	CloseTxid chainhash.Hash
 }
 
 // PendingChannels returns a list of lnd's pending channels.
@@ -1845,12 +1853,18 @@ func (s *lightningClient) PendingChannels(ctx context.Context) (*PendingChannels
 			return nil, err
 		}
 
+		hash, err := chainhash.NewHashFromStr(waiting.ClosingTxid)
+		if err != nil {
+			return nil, err
+		}
+
 		closing := WaitingCloseChannel{
 			PendingChannel:  *channel,
 			LocalTxid:       *local,
 			RemoteTxid:      *remote,
 			RemotePending:   *remotePending,
 			ChanStatusFlags: waiting.Channel.ChanStatusFlags,
+			CloseTxid:       *hash,
 		}
 		pending.WaitingClose[i] = closing
 	}
@@ -3712,4 +3726,18 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 	}()
 
 	return errChan, nil
+}
+
+// StopDaemon will send a shutdown request to the interrupt handler,
+// triggering a graceful shutdown of the daemon.
+func (s *lightningClient) StopDaemon(ctx context.Context) error {
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
+	rpcReq := &lnrpc.StopRequest{}
+
+	_, err := s.client.StopDaemon(rpcCtx, rpcReq)
+
+	return err
 }
