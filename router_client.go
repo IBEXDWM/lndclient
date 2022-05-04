@@ -413,18 +413,18 @@ func (r *routerClient) SendPayment(ctx context.Context,
 
 	// Only if there is no payment request set, we will parse the individual
 	// payment parameters.
-	if request.Invoice == "" {
-		rpcReq.Dest = request.Target[:]
-		rpcReq.Amt = int64(request.Amount)
-		rpcReq.PaymentHash = request.PaymentHash[:]
-		rpcReq.FinalCltvDelta = int32(request.FinalCLTVDelta)
+	// if request.Invoice == "" {
+	rpcReq.Dest = request.Target[:]
+	rpcReq.Amt = int64(request.Amount)
+	rpcReq.PaymentHash = request.PaymentHash[:]
+	rpcReq.FinalCltvDelta = int32(request.FinalCLTVDelta)
 
-		routeHints, err := marshallRouteHints(request.RouteHints)
-		if err != nil {
-			return nil, nil, err
-		}
-		rpcReq.RouteHints = routeHints
+	routeHints, err := marshallRouteHints(request.RouteHints)
+	if err != nil {
+		return nil, nil, err
 	}
+	rpcReq.RouteHints = routeHints
+	// }
 
 	stream, err := r.client.SendPaymentV2(rpcCtx, rpcReq)
 	if err != nil {
