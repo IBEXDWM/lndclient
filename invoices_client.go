@@ -12,6 +12,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"google.golang.org/grpc"
 )
 
@@ -30,8 +31,9 @@ type InvoicesClient interface {
 
 // InvoiceUpdate contains a state update for an invoice.
 type InvoiceUpdate struct {
-	State   channeldb.ContractState
-	AmtPaid btcutil.Amount
+	State       channeldb.ContractState
+	AmtPaid     btcutil.Amount
+	AmtPaidMsat lnwire.MilliSatoshi
 }
 
 type invoicesClient struct {
@@ -42,8 +44,8 @@ type invoicesClient struct {
 }
 
 func newInvoicesClient(conn grpc.ClientConnInterface,
-	invoiceMac serializedMacaroon, timeout time.Duration) *invoicesClient {
-
+	invoiceMac serializedMacaroon, timeout time.Duration,
+) *invoicesClient {
 	return &invoicesClient{
 		client:     invoicesrpc.NewInvoicesClient(conn),
 		invoiceMac: invoiceMac,
@@ -56,8 +58,8 @@ func (s *invoicesClient) WaitForFinished() {
 }
 
 func (s *invoicesClient) SettleInvoice(ctx context.Context,
-	preimage lntypes.Preimage) error {
-
+	preimage lntypes.Preimage,
+) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
@@ -70,8 +72,8 @@ func (s *invoicesClient) SettleInvoice(ctx context.Context,
 }
 
 func (s *invoicesClient) CancelInvoice(ctx context.Context,
-	hash lntypes.Hash) error {
-
+	hash lntypes.Hash,
+) error {
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
@@ -85,8 +87,8 @@ func (s *invoicesClient) CancelInvoice(ctx context.Context,
 
 func (s *invoicesClient) SubscribeSingleInvoice(ctx context.Context,
 	hash lntypes.Hash) (<-chan InvoiceUpdate,
-	<-chan error, error) {
-
+	<-chan error, error,
+) {
 	invoiceStream, err := s.client.SubscribeSingleInvoice(
 		s.invoiceMac.WithMacaroonAuth(ctx),
 		&invoicesrpc.SubscribeSingleInvoiceRequest{
@@ -130,8 +132,9 @@ func (s *invoicesClient) SubscribeSingleInvoice(ctx context.Context,
 
 			select {
 			case updateChan <- InvoiceUpdate{
-				State:   state,
-				AmtPaid: btcutil.Amount(invoice.AmtPaidSat),
+				State:       state,
+				AmtPaid:     btcutil.Amount(invoice.AmtPaidSat),
+				AmtPaidMsat: lnwire.MilliSatoshi(invoice.AmtPaidMsat),
 			}:
 			case <-ctx.Done():
 				return
@@ -143,8 +146,8 @@ func (s *invoicesClient) SubscribeSingleInvoice(ctx context.Context,
 }
 
 func (s *invoicesClient) AddHoldInvoice(ctx context.Context,
-	in *invoicesrpc.AddInvoiceData) (string, error) {
-
+	in *invoicesrpc.AddInvoiceData,
+) (string, error) {
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
@@ -166,8 +169,8 @@ func (s *invoicesClient) AddHoldInvoice(ctx context.Context,
 }
 
 func fromRPCInvoiceState(state lnrpc.Invoice_InvoiceState) (
-	channeldb.ContractState, error) {
-
+	channeldb.ContractState, error,
+) {
 	switch state {
 	case lnrpc.Invoice_OPEN:
 		return channeldb.ContractOpen, nil
