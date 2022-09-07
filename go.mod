@@ -1,4 +1,4 @@
-module github.com/IBEXDWM/lndclient
+module github.com/lightninglabs/lndclient
 
 require (
 	github.com/btcsuite/btcd v0.23.1
