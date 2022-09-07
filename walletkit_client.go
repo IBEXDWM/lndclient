@@ -1,15 +1,17 @@
 package lndclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/wtxmgr"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -48,7 +50,9 @@ type WalletKitClient interface {
 	DeriveKey(ctx context.Context, locator *keychain.KeyLocator) (
 		*keychain.KeyDescriptor, error)
 
-	NextAddr(ctx context.Context) (btcutil.Address, error)
+	NextAddr(ctx context.Context, accountName string,
+		addressType walletrpc.AddressType,
+		change bool) (btcutil.Address, error)
 
 	PublishTransaction(ctx context.Context, tx *wire.MsgTx,
 		label string) error
@@ -57,8 +61,8 @@ type WalletKitClient interface {
 		feeRate chainfee.SatPerKWeight,
 		label string) (*wire.MsgTx, error)
 
-	EstimateFee(ctx context.Context, confTarget int32) (chainfee.SatPerKWeight,
-		error)
+	EstimateFeeRate(ctx context.Context,
+		confTarget int32) (chainfee.SatPerKWeight, error)
 
 	// ListSweeps returns a list of sweep transaction ids known to our node.
 	// Note that this function only looks up transaction ids, and does not
@@ -73,10 +77,63 @@ type WalletKitClient interface {
 	BumpFee(context.Context, wire.OutPoint, chainfee.SatPerKWeight) error
 
 	// ListAccounts retrieves all accounts belonging to the wallet by default.
-	// Optional name and addressType can be provided to filter through all of the
+	// Optional name and addressType can be provided to filter through all the
 	// wallet accounts and return only those matching.
 	ListAccounts(ctx context.Context, name string,
 		addressType walletrpc.AddressType) ([]*walletrpc.Account, error)
+
+	// FundPsbt creates a fully populated PSBT that contains enough inputs
+	// to fund the outputs specified in the template. There are two ways of
+	// specifying a template: Either by passing in a PSBT with at least one
+	// output declared or by passing in a raw TxTemplate message. If there
+	// are no inputs specified in the template, coin selection is performed
+	// automatically. If the template does contain any inputs, it is assumed
+	// that full coin selection happened externally and no additional inputs
+	// are added. If the specified inputs aren't enough to fund the outputs
+	// with the given fee rate, an error is returned.
+	// After either selecting or verifying the inputs, all input UTXOs are
+	// locked with an internal app ID.
+	//
+	// NOTE: If this method returns without an error, it is the caller's
+	// responsibility to either spend the locked UTXOs (by finalizing and
+	// then publishing the transaction) or to unlock/release the locked
+	// UTXOs in case of an error on the caller's side.
+	FundPsbt(ctx context.Context,
+		req *walletrpc.FundPsbtRequest) (*psbt.Packet, int32,
+		[]*walletrpc.UtxoLease, error)
+
+	// SignPsbt expects a partial transaction with all inputs and outputs
+	// fully declared and tries to sign all unsigned inputs that have all
+	// required fields (UTXO information, BIP32 derivation information,
+	// witness or sig scripts) set.
+	// If no error is returned, the PSBT is ready to be given to the next
+	// signer or to be finalized if lnd was the last signer.
+	//
+	// NOTE: This RPC only signs inputs (and only those it can sign), it
+	// does not perform any other tasks (such as coin selection, UTXO
+	// locking or input/output/fee value validation, PSBT finalization). Any
+	// input that is incomplete will be skipped.
+	SignPsbt(ctx context.Context, packet *psbt.Packet) (*psbt.Packet, error)
+
+	// FinalizePsbt expects a partial transaction with all inputs and
+	// outputs fully declared and tries to sign all inputs that belong to
+	// the wallet. Lnd must be the last signer of the transaction. That
+	// means, if there are any unsigned non-witness inputs or inputs without
+	// UTXO information attached or inputs without witness data that do not
+	// belong to lnd's wallet, this method will fail. If no error is
+	// returned, the PSBT is ready to be extracted and the final TX within
+	// to be broadcast.
+	//
+	// NOTE: This method does NOT publish the transaction once finalized. It
+	// is the caller's responsibility to either publish the transaction on
+	// success or unlock/release any locked UTXOs in case of an error in
+	// this method.
+	FinalizePsbt(ctx context.Context, packet *psbt.Packet,
+		account string) (*psbt.Packet, *wire.MsgTx, error)
+
+	// ImportPublicKey imports a public key as watch-only into the wallet.
+	ImportPublicKey(ctx context.Context, pubkey *btcec.PublicKey,
+		addrType lnwallet.AddressType) error
 }
 
 type walletKitClient struct {
@@ -124,6 +181,8 @@ func (m *walletKitClient) ListUnspent(ctx context.Context, minConfs,
 			addrType = lnwallet.WitnessPubKey
 		case lnrpc.AddressType_NESTED_PUBKEY_HASH:
 			addrType = lnwallet.NestedWitnessPubKey
+		case lnrpc.AddressType_TAPROOT_PUBKEY:
+			addrType = lnwallet.TaprootPubkey
 		default:
 			return nil, fmt.Errorf("invalid utxo address type %v",
 				utxo.AddressType)
@@ -215,7 +274,7 @@ func (m *walletKitClient) DeriveNextKey(ctx context.Context, family int32) (
 		return nil, err
 	}
 
-	key, err := btcec.ParsePubKey(resp.RawKeyBytes, btcec.S256())
+	key, err := btcec.ParsePubKey(resp.RawKeyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +303,7 @@ func (m *walletKitClient) DeriveKey(ctx context.Context, in *keychain.KeyLocator
 		return nil, err
 	}
 
-	key, err := btcec.ParsePubKey(resp.RawKeyBytes, btcec.S256())
+	key, err := btcec.ParsePubKey(resp.RawKeyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -255,14 +314,19 @@ func (m *walletKitClient) DeriveKey(ctx context.Context, in *keychain.KeyLocator
 	}, nil
 }
 
-func (m *walletKitClient) NextAddr(ctx context.Context) (
-	btcutil.Address, error) {
+func (m *walletKitClient) NextAddr(ctx context.Context, accountName string,
+	addressType walletrpc.AddressType, change bool) (btcutil.Address,
+	error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 
 	rpcCtx = m.walletKitMac.WithMacaroonAuth(rpcCtx)
-	resp, err := m.client.NextAddr(rpcCtx, &walletrpc.AddrRequest{})
+	resp, err := m.client.NextAddr(rpcCtx, &walletrpc.AddrRequest{
+		Account: accountName,
+		Type:    addressType,
+		Change:  change,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -299,20 +363,12 @@ func (m *walletKitClient) SendOutputs(ctx context.Context,
 	outputs []*wire.TxOut, feeRate chainfee.SatPerKWeight,
 	label string) (*wire.MsgTx, error) {
 
-	rpcOutputs := make([]*signrpc.TxOut, len(outputs))
-	for i, output := range outputs {
-		rpcOutputs[i] = &signrpc.TxOut{
-			PkScript: output.PkScript,
-			Value:    output.Value,
-		}
-	}
-
 	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 
 	rpcCtx = m.walletKitMac.WithMacaroonAuth(rpcCtx)
 	resp, err := m.client.SendOutputs(rpcCtx, &walletrpc.SendOutputsRequest{
-		Outputs:  rpcOutputs,
+		Outputs:  marshallTxOut(outputs),
 		SatPerKw: int64(feeRate),
 		Label:    label,
 	})
@@ -328,7 +384,7 @@ func (m *walletKitClient) SendOutputs(ctx context.Context,
 	return tx, nil
 }
 
-func (m *walletKitClient) EstimateFee(ctx context.Context, confTarget int32) (
+func (m *walletKitClient) EstimateFeeRate(ctx context.Context, confTarget int32) (
 	chainfee.SatPerKWeight, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
@@ -414,4 +470,164 @@ func (m *walletKitClient) ListAccounts(ctx context.Context, name string,
 	}
 
 	return resp.GetAccounts(), nil
+}
+
+// FundPsbt creates a fully populated PSBT that contains enough inputs
+// to fund the outputs specified in the template. There are two ways of
+// specifying a template: Either by passing in a PSBT with at least one
+// output declared or by passing in a raw TxTemplate message. If there
+// are no inputs specified in the template, coin selection is performed
+// automatically. If the template does contain any inputs, it is assumed
+// that full coin selection happened externally and no additional inputs
+// are added. If the specified inputs aren't enough to fund the outputs
+// with the given fee rate, an error is returned.
+// After either selecting or verifying the inputs, all input UTXOs are
+// locked with an internal app ID.
+//
+// NOTE: If this method returns without an error, it is the caller's
+// responsibility to either spend the locked UTXOs (by finalizing and
+// then publishing the transaction) or to unlock/release the locked
+// UTXOs in case of an error on the caller's side.
+func (m *walletKitClient) FundPsbt(ctx context.Context,
+	req *walletrpc.FundPsbtRequest) (*psbt.Packet, int32,
+	[]*walletrpc.UtxoLease, error) {
+
+	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	resp, err := m.client.FundPsbt(
+		m.walletKitMac.WithMacaroonAuth(rpcCtx), req,
+	)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	packet, err := psbt.NewFromRawBytes(
+		bytes.NewReader(resp.FundedPsbt), false,
+	)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	return packet, resp.ChangeOutputIndex, resp.LockedUtxos, nil
+}
+
+// SignPsbt expects a partial transaction with all inputs and outputs
+// fully declared and tries to sign all unsigned inputs that have all
+// required fields (UTXO information, BIP32 derivation information,
+// witness or sig scripts) set.
+// If no error is returned, the PSBT is ready to be given to the next
+// signer or to be finalized if lnd was the last signer.
+//
+// NOTE: This RPC only signs inputs (and only those it can sign), it
+// does not perform any other tasks (such as coin selection, UTXO
+// locking or input/output/fee value validation, PSBT finalization). Any
+// input that is incomplete will be skipped.
+func (m *walletKitClient) SignPsbt(ctx context.Context,
+	packet *psbt.Packet) (*psbt.Packet, error) {
+
+	var psbtBuf bytes.Buffer
+	if err := packet.Serialize(&psbtBuf); err != nil {
+		return nil, err
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	resp, err := m.client.SignPsbt(
+		m.walletKitMac.WithMacaroonAuth(rpcCtx),
+		&walletrpc.SignPsbtRequest{FundedPsbt: psbtBuf.Bytes()},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	signedPacket, err := psbt.NewFromRawBytes(
+		bytes.NewReader(resp.SignedPsbt), false,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return signedPacket, nil
+}
+
+// FinalizePsbt expects a partial transaction with all inputs and
+// outputs fully declared and tries to sign all inputs that belong to
+// the wallet. Lnd must be the last signer of the transaction. That
+// means, if there are any unsigned non-witness inputs or inputs without
+// UTXO information attached or inputs without witness data that do not
+// belong to lnd's wallet, this method will fail. If no error is
+// returned, the PSBT is ready to be extracted and the final TX within
+// to be broadcast.
+//
+// NOTE: This method does NOT publish the transaction once finalized. It
+// is the caller's responsibility to either publish the transaction on
+// success or unlock/release any locked UTXOs in case of an error in
+// this method.
+func (m *walletKitClient) FinalizePsbt(ctx context.Context, packet *psbt.Packet,
+	account string) (*psbt.Packet, *wire.MsgTx, error) {
+
+	var psbtBuf bytes.Buffer
+	if err := packet.Serialize(&psbtBuf); err != nil {
+		return nil, nil, err
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	resp, err := m.client.FinalizePsbt(
+		m.walletKitMac.WithMacaroonAuth(rpcCtx),
+		&walletrpc.FinalizePsbtRequest{
+			FundedPsbt: psbtBuf.Bytes(),
+			Account:    account,
+		},
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	finalizedPacket, err := psbt.NewFromRawBytes(
+		bytes.NewReader(resp.SignedPsbt), false,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	finalTx := wire.NewMsgTx(2)
+	err = finalTx.Deserialize(bytes.NewReader(resp.RawFinalTx))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return finalizedPacket, finalTx, nil
+}
+
+// ImportPublicKey imports a public key as watch-only into the wallet.
+func (m *walletKitClient) ImportPublicKey(ctx context.Context,
+	pubKey *btcec.PublicKey, addrType lnwallet.AddressType) error {
+
+	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	var rpcAddrType walletrpc.AddressType
+	switch addrType {
+	case lnwallet.WitnessPubKey:
+		rpcAddrType = walletrpc.AddressType_WITNESS_PUBKEY_HASH
+	case lnwallet.NestedWitnessPubKey:
+		rpcAddrType = walletrpc.AddressType_NESTED_WITNESS_PUBKEY_HASH
+	case lnwallet.TaprootPubkey:
+		rpcAddrType = walletrpc.AddressType_TAPROOT_PUBKEY
+	default:
+		return fmt.Errorf("invalid utxo address type %v", addrType)
+	}
+
+	_, err := m.client.ImportPublicKey(
+		m.walletKitMac.WithMacaroonAuth(rpcCtx),
+		&walletrpc.ImportPublicKeyRequest{
+			PublicKey:   pubKey.SerializeCompressed(),
+			AddressType: rpcAddrType,
+		},
+	)
+	return err
 }

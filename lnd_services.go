@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/verrpc"
@@ -41,8 +41,8 @@ var (
 	// back version if none is specified in the configuration.
 	minimalCompatibleVersion = &verrpc.Version{
 		AppMajor:  0,
-		AppMinor:  14,
-		AppPatch:  2,
+		AppMinor:  15,
+		AppPatch:  0,
 		BuildTags: DefaultBuildTags,
 	}
 

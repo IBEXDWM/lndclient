@@ -31,7 +31,6 @@ var (
 		"ConfirmedWalletBalance": "WalletBalance",
 		"Connect":                "ConnectPeer",
 		"DecodePaymentRequest":   "DecodePayReq",
-		"EstimateFeeToP2WSH":     "EstimateFee",
 		"ListTransactions":       "GetTransactions",
 		"PayInvoice":             "SendPaymentSync",
 		"UpdateChanPolicy":       "UpdateChannelPolicy",
@@ -39,6 +38,8 @@ var (
 		"SubscribeGraph":         "SubscribeChannelGraph",
 		"InterceptHtlcs":         "HtlcInterceptor",
 		"ImportMissionControl":   "XImportMissionControl",
+		"EstimateFeeRate":        "EstimateFee",
+		"EstimateFeeToP2WSH":     "EstimateFee",
 	}
 )
 

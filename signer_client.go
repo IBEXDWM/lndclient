@@ -2,9 +2,12 @@ package lndclient
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/input"
@@ -15,8 +18,13 @@ import (
 
 // SignerClient exposes sign functionality.
 type SignerClient interface {
+	// SignOutputRaw is a method that can be used to generate a signature
+	// for a set of inputs/outputs to a transaction. Each request specifies
+	// details concerning how the outputs should be signed, which keys they
+	// should be signed with, and also any optional tweaks.
 	SignOutputRaw(ctx context.Context, tx *wire.MsgTx,
-		signDescriptors []*SignDescriptor) ([][]byte, error)
+		signDescriptors []*SignDescriptor,
+		prevOutputs []*wire.TxOut) ([][]byte, error)
 
 	// ComputeInputScript generates the proper input script for P2WPKH
 	// output and NP2WPKH outputs. This method only requires that the
@@ -48,6 +56,35 @@ type SignerClient interface {
 	// bits.
 	DeriveSharedKey(ctx context.Context, ephemeralPubKey *btcec.PublicKey,
 		keyLocator *keychain.KeyLocator) ([32]byte, error)
+
+	// MuSig2CreateSession creates a new musig session with the key and
+	// signers provided.
+	MuSig2CreateSession(ctx context.Context,
+		signerLoc *keychain.KeyLocator, signers [][32]byte,
+		opts ...MuSig2SessionOpts) (*input.MuSig2SessionInfo, error)
+
+	// MuSig2RegisterNonces registers additional public nonces for a musig2
+	// session. It returns a boolean indicating whether we have all of our
+	// nonces present.
+	MuSig2RegisterNonces(ctx context.Context, sessionID [32]byte,
+		nonces [][66]byte) (bool, error)
+
+	// MuSig2Sign creates a partial signature for the 32 byte SHA256 digest
+	// of a message. This can only be called once all public nonces have
+	// been created. If the caller will not be responsible for combining
+	// the signatures, the cleanup bool should be set.
+	MuSig2Sign(ctx context.Context, sessionID [32]byte,
+		message [32]byte, cleanup bool) ([]byte, error)
+
+	// MuSig2CombineSig combines the given partial signature(s) with the
+	// local one, if it already exists. Once a partial signature of all
+	// participants are registered, the final signature will be combined
+	// and returned.
+	MuSig2CombineSig(ctx context.Context, sessionID [32]byte,
+		otherPartialSigs [][]byte) (bool, []byte, error)
+
+	// MuSig2Cleanup removes a session from memory to free up resources.
+	MuSig2Cleanup(ctx context.Context, sessionID [32]byte) error
 }
 
 // SignDescriptor houses the necessary information required to successfully
@@ -88,11 +125,29 @@ type SignDescriptor struct {
 	// DoubleTweak, not both.
 	DoubleTweak *btcec.PrivateKey
 
+	// The 32 byte input to the taproot tweak derivation that is used to
+	// derive the output key from an internal key: outputKey = internalKey +
+	// tagged_hash("tapTweak", internalKey || tapTweak).
+	//
+	// When doing a BIP 86 spend, this field can be an empty byte slice.
+	//
+	// When doing a normal key path spend, with the output key committing to
+	// an actual script root, then this field should be: the tapscript root
+	// hash.
+	TapTweak []byte
+
 	// WitnessScript is the full script required to properly redeem the
-	// output. This field should be set to the full script if a p2wsh
-	// output is being signed. For p2wkh it should be set to the hashed
-	// script (PkScript).
+	// output. This field should be set to the full script if a p2wsh or
+	// p2tr output is being signed. For p2wkh it should be set to the hashed
+	// script (PkScript), for p2tr this should be the raw leaf script that's
+	// being spent.
 	WitnessScript []byte
+
+	// TaprootKeySpend specifies how the input should be signed. Depending
+	// on the method, either the tap_tweak, witness_script or both need to
+	// be specified. Defaults to SegWit v0 signing to be backward compatible
+	// with older RPC clients.
+	SignMethod input.SignMethod
 
 	// Output is the target output which should be signed. The PkScript and
 	// Value fields within the output should be properly populated,
@@ -106,6 +161,23 @@ type SignDescriptor struct {
 	// InputIndex is the target input within the transaction that should be
 	// signed.
 	InputIndex int
+}
+
+// MarshalSignMethod turns the native sign method into the RPC counterpart.
+func MarshalSignMethod(signMethod input.SignMethod) signrpc.SignMethod {
+	switch signMethod {
+	case input.TaprootKeySpendBIP0086SignMethod:
+		return signrpc.SignMethod_SIGN_METHOD_TAPROOT_KEY_SPEND_BIP0086
+
+	case input.TaprootKeySpendSignMethod:
+		return signrpc.SignMethod_SIGN_METHOD_TAPROOT_KEY_SPEND
+
+	case input.TaprootScriptSpendSignMethod:
+		return signrpc.SignMethod_SIGN_METHOD_TAPROOT_SCRIPT_SPEND
+
+	default:
+		return signrpc.SignMethod_SIGN_METHOD_WITNESS_V0
+	}
 }
 
 type signerClient struct {
@@ -124,8 +196,8 @@ func newSignerClient(conn grpc.ClientConnInterface,
 	}
 }
 
-func marshallSignDescriptors(signDescriptors []*SignDescriptor,
-) []*signrpc.SignDescriptor {
+func marshallSignDescriptors(
+	signDescriptors []*SignDescriptor) []*signrpc.SignDescriptor {
 
 	rpcSignDescs := make([]*signrpc.SignDescriptor, len(signDescriptors))
 	for i, signDesc := range signDescriptors {
@@ -151,6 +223,7 @@ func marshallSignDescriptors(signDescriptors []*SignDescriptor,
 
 		rpcSignDescs[i] = &signrpc.SignDescriptor{
 			WitnessScript: signDesc.WitnessScript,
+			SignMethod:    MarshalSignMethod(signDesc.SignMethod),
 			Output: &signrpc.TxOut{
 				PkScript: signDesc.Output.PkScript,
 				Value:    signDesc.Output.Value,
@@ -163,20 +236,40 @@ func marshallSignDescriptors(signDescriptors []*SignDescriptor,
 			},
 			SingleTweak: signDesc.SingleTweak,
 			DoubleTweak: doubleTweak,
+			TapTweak:    signDesc.TapTweak,
 		}
 	}
 
 	return rpcSignDescs
 }
 
+// marshallTxOut marshals the transaction outputs as their RPC counterparts.
+func marshallTxOut(outputs []*wire.TxOut) []*signrpc.TxOut {
+	rpcOutputs := make([]*signrpc.TxOut, len(outputs))
+	for i, output := range outputs {
+		rpcOutputs[i] = &signrpc.TxOut{
+			PkScript: output.PkScript,
+			Value:    output.Value,
+		}
+	}
+
+	return rpcOutputs
+}
+
+// SignOutputRaw is a method that can be used to generate a signature for a set
+// of inputs/outputs to a transaction. Each request specifies details concerning
+// how the outputs should be signed, which keys they should be signed with, and
+// also any optional tweaks.
 func (s *signerClient) SignOutputRaw(ctx context.Context, tx *wire.MsgTx,
-	signDescriptors []*SignDescriptor) ([][]byte, error) {
+	signDescriptors []*SignDescriptor, prevOutputs []*wire.TxOut) ([][]byte,
+	error) {
 
 	txRaw, err := encodeTx(tx)
 	if err != nil {
 		return nil, err
 	}
 	rpcSignDescs := marshallSignDescriptors(signDescriptors)
+	rpcPervOutputs := marshallTxOut(prevOutputs)
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -184,8 +277,9 @@ func (s *signerClient) SignOutputRaw(ctx context.Context, tx *wire.MsgTx,
 	rpcCtx = s.signerMac.WithMacaroonAuth(rpcCtx)
 	resp, err := s.client.SignOutputRaw(rpcCtx,
 		&signrpc.SignReq{
-			RawTxBytes: txRaw,
-			SignDescs:  rpcSignDescs,
+			RawTxBytes:  txRaw,
+			SignDescs:   rpcSignDescs,
+			PrevOutputs: rpcPervOutputs,
 		},
 	)
 	if err != nil {
@@ -312,4 +406,186 @@ func (s *signerClient) DeriveSharedKey(ctx context.Context,
 	var sharedKey [32]byte
 	copy(sharedKey[:], resp.SharedKey)
 	return sharedKey, nil
+}
+
+// MuSig2SessionOpts is the signature used to apply functional options to
+// musig session requests.
+type MuSig2SessionOpts func(*signrpc.MuSig2SessionRequest)
+
+// noncesToBytes converts a set of public nonces to a [][]byte.
+func noncesToBytes(nonces [][musig2.PubNonceSize]byte) [][]byte {
+	nonceBytes := make([][]byte, len(nonces))
+
+	for i := range nonces {
+		nonceBytes[i] = nonces[i][:]
+	}
+
+	return nonceBytes
+}
+
+// MuSig2NonceOpt adds an optional set of nonces to a musig session request.
+func MuSig2NonceOpt(nonces [][musig2.PubNonceSize]byte) MuSig2SessionOpts {
+	return func(s *signrpc.MuSig2SessionRequest) {
+		s.OtherSignerPublicNonces = noncesToBytes(nonces)
+	}
+}
+
+// MuSig2TaprootTweakOpt adds an optional taproot tweak to the musig session
+// request.
+func MuSig2TaprootTweakOpt(scriptRoot []byte,
+	keySpendOnly bool) MuSig2SessionOpts {
+
+	return func(s *signrpc.MuSig2SessionRequest) {
+		s.TaprootTweak = &signrpc.TaprootTweakDesc{
+			ScriptRoot:   scriptRoot,
+			KeySpendOnly: keySpendOnly,
+		}
+	}
+}
+
+// MuSig2CreateSession creates a new musig session with the key and signers
+// provided.
+func (s *signerClient) MuSig2CreateSession(ctx context.Context,
+	signerLoc *keychain.KeyLocator, signers [][32]byte,
+	opts ...MuSig2SessionOpts) (*input.MuSig2SessionInfo, error) {
+
+	signerBytes := make([][]byte, len(signers))
+	for i, signer := range signers {
+		signerBytes[i] = make([]byte, 32)
+		copy(signerBytes[i], signer[:])
+	}
+
+	req := &signrpc.MuSig2SessionRequest{
+		KeyLoc: &signrpc.KeyLocator{
+			KeyFamily: int32(signerLoc.Family),
+			KeyIndex:  int32(signerLoc.Index),
+		},
+		AllSignerPubkeys: signerBytes,
+	}
+
+	for _, opt := range opts {
+		opt(req)
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.signerMac.WithMacaroonAuth(rpcCtx)
+	resp, err := s.client.MuSig2CreateSession(rpcCtx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	combinedKey, err := schnorr.ParsePubKey(resp.CombinedKey)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse combined key: %v", err)
+	}
+
+	session := &input.MuSig2SessionInfo{
+		CombinedKey:   combinedKey,
+		HaveAllNonces: resp.HaveAllNonces,
+	}
+
+	if len(resp.LocalPublicNonces) != musig2.PubNonceSize {
+		return nil, fmt.Errorf("unexpected local nonce size: %v",
+			len(resp.LocalPublicNonces))
+	}
+	copy(session.PublicNonce[:], resp.LocalPublicNonces)
+
+	if len(resp.SessionId) != 32 {
+		return nil, fmt.Errorf("unexpected session ID length: %v",
+			len(resp.SessionId))
+	}
+
+	copy(session.SessionID[:], resp.SessionId)
+
+	return session, nil
+}
+
+// MuSig2RegisterNonces registers additional public nonces for a musig2 session.
+// It returns a boolean indicating whether we have all of our nonces present.
+func (s *signerClient) MuSig2RegisterNonces(ctx context.Context,
+	sessionID [32]byte, nonces [][66]byte) (bool, error) {
+
+	req := &signrpc.MuSig2RegisterNoncesRequest{
+		SessionId:               sessionID[:],
+		OtherSignerPublicNonces: noncesToBytes(nonces),
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.signerMac.WithMacaroonAuth(rpcCtx)
+	resp, err := s.client.MuSig2RegisterNonces(rpcCtx, req)
+	if err != nil {
+		return false, err
+	}
+
+	return resp.HaveAllNonces, nil
+}
+
+// MuSig2Sign creates a partial signature for the 32 byte SHA256 digest of a
+// message. This can only be called once all public nonces have been created.
+// If the caller will not be responsible for combining the signatures, the
+// cleanup bool should be set.
+func (s *signerClient) MuSig2Sign(ctx context.Context, sessionID [32]byte,
+	message [32]byte, cleanup bool) ([]byte, error) {
+
+	req := &signrpc.MuSig2SignRequest{
+		SessionId:     sessionID[:],
+		MessageDigest: message[:],
+		Cleanup:       cleanup,
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.signerMac.WithMacaroonAuth(rpcCtx)
+	resp, err := s.client.MuSig2Sign(rpcCtx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.LocalPartialSignature, nil
+}
+
+// MuSig2CombineSig combines the given partial signature(s) with the local one,
+// if it already exists. Once a partial signature of all participants are
+// registered, the final signature will be combined and returned.
+func (s *signerClient) MuSig2CombineSig(ctx context.Context, sessionID [32]byte,
+	otherPartialSigs [][]byte) (bool, []byte, error) {
+
+	req := &signrpc.MuSig2CombineSigRequest{
+		SessionId:              sessionID[:],
+		OtherPartialSignatures: otherPartialSigs,
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.signerMac.WithMacaroonAuth(rpcCtx)
+	resp, err := s.client.MuSig2CombineSig(rpcCtx, req)
+	if err != nil {
+		return false, nil, err
+	}
+
+	return resp.HaveAllSignatures, resp.FinalSignature, nil
+}
+
+// MuSig2Cleanup allows a caller to clean up a session early in case where it's
+// obvious that the signing session won't succeed and the resources can be
+// released.
+func (s *signerClient) MuSig2Cleanup(ctx context.Context,
+	sessionID [32]byte) error {
+
+	req := &signrpc.MuSig2CleanupRequest{
+		SessionId: sessionID[:],
+	}
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.signerMac.WithMacaroonAuth(rpcCtx)
+	_, err := s.client.MuSig2Cleanup(rpcCtx, req)
+
+	return err
 }

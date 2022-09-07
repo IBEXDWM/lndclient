@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
@@ -36,6 +36,14 @@ type LightningClient interface {
 
 	GetInfo(ctx context.Context) (*Info, error)
 
+	// EstimateFee estimates the total fees for a transaction that pays the
+	// given amount to the passed address.
+	EstimateFee(ctx context.Context, address btcutil.Address,
+		amt btcutil.Amount, confTarget int32) (btcutil.Amount, error)
+
+	// EstimateFeeToP2WSH estimates the total chain fees in satoshis to send
+	// the given amount to a single P2WSH output with the given target
+	// confirmation.
 	EstimateFeeToP2WSH(ctx context.Context, amt btcutil.Amount,
 		confTarget int32) (btcutil.Amount, error)
 
@@ -202,6 +210,14 @@ type LightningClient interface {
 	// StopDaemon will send a shutdown request to the interrupt handler,
 	// triggering a graceful shutdown of the daemon.
 	StopDaemon(ctx context.Context) error
+
+	// SendCustomMessage sends a custom message to a peer.
+	SendCustomMessage(ctx context.Context, msg CustomMessage) error
+
+	// SubscribeCustomMessages creates a subscription to custom messages
+	// received from our peers.
+	SubscribeCustomMessages(ctx context.Context) (<-chan CustomMessage,
+		<-chan error, error)
 }
 
 // Info contains info about the connected lnd node.
@@ -288,6 +304,10 @@ type ChannelInfo struct {
 	// online over its lifetime.
 	Uptime time.Duration
 
+	// ChanStatusFlags is a set of flags showing the current state of the
+	// channel.
+	ChanStatusFlags string
+
 	// TotalSent is the total amount sent over this channel for our own
 	// payments.
 	TotalSent btcutil.Amount
@@ -346,6 +366,7 @@ func (s *lightningClient) newChannelInfo(channel *lnrpc.Channel) (*ChannelInfo,
 		UnsettledBalance: btcutil.Amount(channel.UnsettledBalance),
 		Initiator:        channel.Initiator,
 		Private:          channel.Private,
+		ChanStatusFlags:  channel.ChanStatusFlags,
 		NumPendingHtlcs:  len(channel.PendingHtlcs),
 		TotalSent:        btcutil.Amount(channel.TotalSatoshisSent),
 		TotalReceived:    btcutil.Amount(channel.TotalSatoshisReceived),
@@ -1080,6 +1101,18 @@ type QueryRoutesResponse struct {
 	TotalAmtMsat lnwire.MilliSatoshi
 }
 
+// CustomMessage describes custom messages exchanged with peers.
+type CustomMessage struct {
+	// Peer is the peer that the message was exchanged with.
+	Peer route.Vertex
+
+	// MsgType is the protocol message type number for the custom message.
+	MsgType uint32
+
+	// Data is the data exchanged.
+	Data []byte
+}
+
 var (
 	// ErrNoRouteFound is returned if we can't find a path with the passed
 	// parameters.
@@ -1194,14 +1227,37 @@ func newInfo(resp *lnrpc.GetInfoResponse) (*Info, error) {
 	}, nil
 }
 
-func (s *lightningClient) EstimateFeeToP2WSH(ctx context.Context,
-	amt btcutil.Amount, confTarget int32) (btcutil.Amount,
-	error) {
+// EstimateFee estimates the total fees for a transaction that pays the given
+// amount to the passed address.
+func (s *lightningClient) EstimateFee(ctx context.Context,
+	address btcutil.Address, amt btcutil.Amount, confTarget int32) (
+	btcutil.Amount, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	// Generate dummy p2wsh address for fee estimation.
+	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
+	resp, err := s.client.EstimateFee(
+		rpcCtx,
+		&lnrpc.EstimateFeeRequest{
+			TargetConf: confTarget,
+			AddrToAmount: map[string]int64{
+				address.String(): int64(amt),
+			},
+		},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return btcutil.Amount(resp.FeeSat), nil
+}
+
+// EstimateFeeToP2WSH estimates the total chain fees in satoshis to send the
+// given amount to a single P2WSH output with the given target confirmation.
+func (s *lightningClient) EstimateFeeToP2WSH(ctx context.Context,
+	amt btcutil.Amount, confTarget int32) (btcutil.Amount, error) {
+
+	// Generate a dummy p2wsh address for fee estimation.
 	wsh := [32]byte{}
 	p2wshAddress, err := btcutil.NewAddressWitnessScriptHash(
 		wsh[:], s.params,
@@ -1210,20 +1266,7 @@ func (s *lightningClient) EstimateFeeToP2WSH(ctx context.Context,
 		return 0, err
 	}
 
-	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
-	resp, err := s.client.EstimateFee(
-		rpcCtx,
-		&lnrpc.EstimateFeeRequest{
-			TargetConf: confTarget,
-			AddrToAmount: map[string]int64{
-				p2wshAddress.String(): int64(amt),
-			},
-		},
-	)
-	if err != nil {
-		return 0, err
-	}
-	return btcutil.Amount(resp.FeeSat), nil
+	return s.EstimateFee(ctx, p2wshAddress, amt, confTarget)
 }
 
 // PayInvoice pays an invoice.
@@ -1370,10 +1413,10 @@ func (s *lightningClient) AddInvoice(ctx context.Context,
 	rpcIn := &lnrpc.Invoice{
 		Memo:            in.Memo,
 		ValueMsat:       int64(in.Value),
+		DescriptionHash: in.DescriptionHash,
 		Expiry:          in.Expiry,
 		CltvExpiry:      in.CltvExpiry,
 		Private:         true,
-		DescriptionHash: in.DescriptionHash,
 	}
 
 	if in.Preimage != nil {
@@ -3740,4 +3783,85 @@ func (s *lightningClient) StopDaemon(ctx context.Context) error {
 	_, err := s.client.StopDaemon(rpcCtx, rpcReq)
 
 	return err
+}
+
+// SendCustomMessage sends a custom message to one of our existing peers. Note
+// that lnd must already be connected to a peer to send it messages.
+func (s *lightningClient) SendCustomMessage(ctx context.Context,
+	msg CustomMessage) error {
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
+	rpcReq := &lnrpc.SendCustomMessageRequest{
+		Peer: msg.Peer[:],
+		Type: msg.MsgType,
+		Data: msg.Data,
+	}
+
+	_, err := s.client.SendCustomMessage(rpcCtx, rpcReq)
+	return err
+}
+
+// SubscribeCustomMessages subscribes to a stream of custom messages, optionally
+// filtering by peer and message type. The channels returned will be closed
+// when the subscription exits.
+func (s *lightningClient) SubscribeCustomMessages(ctx context.Context) (
+	<-chan CustomMessage, <-chan error, error) {
+
+	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
+	rpcReq := &lnrpc.SubscribeCustomMessagesRequest{}
+
+	client, err := s.client.SubscribeCustomMessages(rpcCtx, rpcReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var (
+		// Buffer error channel by 1 so that consumer reading from this
+		// channel does not block our exit.
+		errChan = make(chan error, 1)
+		msgChan = make(chan CustomMessage)
+	)
+
+	s.wg.Add(1)
+	go func() {
+		defer func() {
+			// Close channels on exit so that callers know the
+			// subscription has finished.
+			close(errChan)
+			close(msgChan)
+
+			s.wg.Done()
+		}()
+
+		for {
+			msg, err := client.Recv()
+			if err != nil {
+				errChan <- fmt.Errorf("receive failed: %w", err)
+				return
+			}
+
+			peer, err := route.NewVertexFromBytes(msg.Peer)
+			if err != nil {
+				errChan <- fmt.Errorf("invalid peer: %w", err)
+				return
+			}
+
+			customMsg := CustomMessage{
+				Peer:    peer,
+				Data:    msg.Data,
+				MsgType: msg.Type,
+			}
+
+			select {
+			case msgChan <- customMsg:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return msgChan, errChan, nil
 }
