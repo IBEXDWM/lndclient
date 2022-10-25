@@ -1227,6 +1227,73 @@ func newInfo(resp *lnrpc.GetInfoResponse) (*Info, error) {
 	}, nil
 }
 
+// NewAddress generates a new address for the lnd client.
+func (s *lightningClient) NewAddress(ctx context.Context, addressType lnrpc.AddressType) (
+	string, error) {
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
+
+	resp, err := s.client.NewAddress(
+		rpcCtx,
+		&lnrpc.NewAddressRequest{
+			Type: addressType,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return resp.Address, nil
+}
+
+// SendMany handles a request for a transaction that creates multiple specified outputs in parallel.
+func (s *lightningClient) SendMany(ctx context.Context, txBatch map[string]int64, satPerVbyte uint64) (
+	string, error) {
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
+
+	resp, err := s.client.SendMany(
+		rpcCtx,
+		&lnrpc.SendManyRequest{
+			AddrToAmount:     txBatch,
+			SatPerVbyte:      satPerVbyte,
+			SpendUnconfirmed: false,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return resp.Txid, nil
+}
+
+// EstimateFees estimates the total fees for a batch of transactions that pay the given
+// amounts to the passed addresses.
+func (s *lightningClient) EstimateFees(ctx context.Context, txBatch map[string]int64) (
+	btcutil.Amount, error) {
+
+	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
+	resp, err := s.client.EstimateFee(
+		rpcCtx,
+		&lnrpc.EstimateFeeRequest{
+			AddrToAmount: txBatch,
+			TargetConf:   1, // confirm within x blocks
+			MinConfs:     1, // use utxos with a minimum conf of x blocks
+		},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return btcutil.Amount(resp.FeeSat), nil
+}
+
 // EstimateFee estimates the total fees for a transaction that pays the given
 // amount to the passed address.
 func (s *lightningClient) EstimateFee(ctx context.Context,
