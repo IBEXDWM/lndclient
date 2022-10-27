@@ -41,6 +41,17 @@ type LightningClient interface {
 	EstimateFee(ctx context.Context, address btcutil.Address,
 		amt btcutil.Amount, confTarget int32) (btcutil.Amount, error)
 
+	// NewAddress generates a new address for the lnd client.
+	NewAddress(ctx context.Context, addressType lnrpc.AddressType) (string, error)
+
+	// SendMany handles a request for a transaction that creates multiple specified outputs in parallel.
+	SendMany(ctx context.Context, txBatch map[string]int64, satPerVbyte uint64) (string, error)
+
+	// EstimateFees estimates the total fees for a batch of transactions that pay the given
+	// amounts to the passed addresses.
+	EstimateFees(ctx context.Context, address btcutil.Address,
+		amt btcutil.Amount, confTarget int32) (btcutil.Amount, error)
+
 	// EstimateFeeToP2WSH estimates the total chain fees in satoshis to send
 	// the given amount to a single P2WSH output with the given target
 	// confirmation.
