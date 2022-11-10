@@ -49,7 +49,7 @@ type LightningClient interface {
 
 	// EstimateFees estimates the total fees for a batch of transactions that pay the given
 	// amounts to the passed addresses.
-	EstimateFees(ctx context.Context, txBatch map[string]int64) (btcutil.Amount, error)
+	EstimateFees(ctx context.Context, txBatch map[string]int64) (*lnrpc.EstimateFeeResponse, error)
 
 	// EstimateFeeToP2WSH estimates the total chain fees in satoshis to send
 	// the given amount to a single P2WSH output with the given target
