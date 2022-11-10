@@ -1284,7 +1284,7 @@ func (s *lightningClient) SendMany(ctx context.Context, txBatch map[string]int64
 // EstimateFees estimates the total fees for a batch of transactions that pay the given
 // amounts to the passed addresses.
 func (s *lightningClient) EstimateFees(ctx context.Context, txBatch map[string]int64) (
-	btcutil.Amount, error) {
+	*lnrpc.EstimateFeeResponse, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -1299,9 +1299,9 @@ func (s *lightningClient) EstimateFees(ctx context.Context, txBatch map[string]i
 		},
 	)
 	if err != nil {
-		return 0, err
+		return resp, err
 	}
-	return btcutil.Amount(resp.FeeSat), nil
+	return resp, nil
 }
 
 // EstimateFee estimates the total fees for a transaction that pays the given
