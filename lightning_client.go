@@ -64,8 +64,25 @@ func WithScid() OpenChannelOption {
 	}
 }
 
+// WithRemoteReserve signals that the channel open should set a remote reserve
+// amount.
+func WithRemoteReserve(reserve uint64) OpenChannelOption {
+	return func(r *lnrpc.OpenChannelRequest) {
+		r.RemoteChanReserveSat = reserve
+	}
+}
+
+// WithRemoteMaxHtlc limits the number of htlcs the remote party can offer.
+func WithRemoteMaxHtlc(maxHtlc uint32) OpenChannelOption {
+	return func(r *lnrpc.OpenChannelRequest) {
+		r.RemoteMaxHtlcs = maxHtlc
+	}
+}
+
 // LightningClient exposes base lightning functionality.
 type LightningClient interface {
+	ServiceClient[lnrpc.LightningClient]
+
 	PayInvoice(ctx context.Context, invoice string,
 		maxFee btcutil.Amount,
 		outgoingChannel *uint64) chan PaymentResult
@@ -281,6 +298,26 @@ type LightningClient interface {
 	// relevant to the wallet are sent over.
 	SubscribeTransactions(ctx context.Context) (<-chan Transaction,
 		<-chan error, error)
+
+	// SignMessage signs a message with this node's private key.
+	// The returned signature string is zbase32 encoded and pubkey
+	// recoverable, meaning that only the message digest and signature
+	// are needed for verification.
+	SignMessage(ctx context.Context, data []byte) (string,
+		error)
+
+	// VerifyMessage verifies a signature over a msg. The signature must
+	// be zbase32 encoded and signed by an active node in the resident
+	// node's channel database. In addition to returning the validity of
+	// the signature, VerifyMessage also returns the recovered pubkey
+	// from the signature.
+	VerifyMessage(ctx context.Context, data []byte, signature string) (bool,
+		string, error)
+
+	// ListAliases returns the set of all aliases that have ever existed
+	// with their confirmed SCID (if it exists) and/or the base SCID (in the
+	// case of zero conf).
+	ListAliases(ctx context.Context) ([]*lnrpc.AliasMap, error)
 }
 
 // Info contains info about the connected lnd node.
@@ -421,6 +458,10 @@ type ChannelInfo struct {
 	AliasScids []uint64
 
 	PeerAlias string
+
+	// CustomChannelData is an optional field that can be used to store
+	// data for custom channels.
+	CustomChannelData []byte
 }
 
 func (s *lightningClient) newChannelInfo(channel *lnrpc.Channel) (*ChannelInfo,
@@ -462,9 +503,10 @@ func (s *lightningClient) newChannelInfo(channel *lnrpc.Channel) (*ChannelInfo,
 		RemoteConstraints: newChannelConstraint(
 			channel.RemoteConstraints,
 		),
-		ZeroConf:     channel.ZeroConf,
-		ZeroConfScid: channel.ZeroConfConfirmedScid,
-		PeerAlias:    channel.PeerAlias,
+		ZeroConf:          channel.ZeroConf,
+		ZeroConfScid:      channel.ZeroConfConfirmedScid,
+		PeerAlias:         channel.PeerAlias,
+		CustomChannelData: channel.CustomChannelData,
 	}
 
 	chanInfo.AliasScids = make([]uint64, len(channel.AliasScids))
@@ -823,6 +865,9 @@ type Peer struct {
 
 	// Received is the total amount we have received from this peer.
 	Received btcutil.Amount
+
+	// Features is the set of the features supported by the node.
+	Features *lnwire.FeatureVector
 }
 
 // ChannelBalance contains information about our channel balances.
@@ -832,6 +877,10 @@ type ChannelBalance struct {
 
 	// PendingBalance is the sum of all pending channel balances.
 	PendingBalance btcutil.Amount
+
+	// CustomChannelData is an optional field that can be used to store
+	// data for custom channels.
+	CustomChannelData []byte
 }
 
 // Node describes a node in the network.
@@ -880,7 +929,7 @@ func newNode(lnNode *lnrpc.LightningNode) (*Node, error) {
 		)
 	}
 
-	for i := 0; i < len(lnNode.Addresses); i++ {
+	for i := range lnNode.Addresses {
 		node.Addresses[i] = lnNode.Addresses[i].Addr
 	}
 
@@ -1115,6 +1164,10 @@ func newAcceptorRequest(req *lnrpc.ChannelAcceptRequest) (*AcceptorRequest,
 		commitmentType = new(lnwallet.CommitmentType)
 		*commitmentType = lnwallet.CommitmentTypeSimpleTaproot
 
+	case lnrpc.CommitmentType_SIMPLE_TAPROOT_OVERLAY:
+		commitmentType = new(lnwallet.CommitmentType)
+		*commitmentType = lnwallet.CommitmentTypeSimpleTaprootOverlay
+
 	default:
 		return nil, fmt.Errorf("unhandled commitment type %v",
 			req.CommitmentType)
@@ -1305,6 +1358,10 @@ type lightningClient struct {
 	adminMac serializedMacaroon
 }
 
+// A compile time check to ensure that lightningClient implements the
+// LightningClient interface.
+var _ LightningClient = (*lightningClient)(nil)
+
 func newLightningClient(conn grpc.ClientConnInterface, timeout time.Duration,
 	params *chaincfg.Params, adminMac serializedMacaroon) *lightningClient {
 
@@ -1326,6 +1383,15 @@ type PaymentResult struct {
 
 func (s *lightningClient) WaitForFinished() {
 	s.wg.Wait()
+}
+
+// RawClientWithMacAuth returns a context with the proper macaroon
+// authentication, the default RPC timeout, and the raw client.
+func (s *lightningClient) RawClientWithMacAuth(
+	parentCtx context.Context) (context.Context, time.Duration,
+	lnrpc.LightningClient) {
+
+	return s.adminMac.WithMacaroonAuth(parentCtx), s.timeout, s.client
 }
 
 // WalletBalance returns a summary of the node's wallet balance.
@@ -1582,7 +1648,7 @@ func (s *lightningClient) AddInvoice(ctx context.Context,
 		DescriptionHash: in.DescriptionHash,
 		Expiry:          in.Expiry,
 		CltvExpiry:      in.CltvExpiry,
-		Private:         true,
+		Private:         in.Private,
 	}
 
 	if in.Preimage != nil {
@@ -1681,6 +1747,10 @@ type InvoiceHtlc struct {
 
 	// CustomRecords is list of the custom tlv records.
 	CustomRecords map[uint64][]byte
+
+	// CustomChannelData is an optional field that can be used to store
+	// data for custom channels.
+	CustomChannelData []byte
 }
 
 // PendingHtlc represents a HTLC that is currently pending on some channel.
@@ -1779,10 +1849,13 @@ func unmarshalInvoice(resp *lnrpc.Invoice) (*Invoice, error) {
 
 	for i, htlc := range resp.Htlcs {
 		invoiceHtlc := InvoiceHtlc{
-			ChannelID:     lnwire.NewShortChanIDFromInt(htlc.ChanId),
-			Amount:        lnwire.MilliSatoshi(htlc.AmtMsat),
-			CustomRecords: htlc.CustomRecords,
-			State:         htlc.State,
+			ChannelID: lnwire.NewShortChanIDFromInt(
+				htlc.ChanId,
+			),
+			Amount:            lnwire.MilliSatoshi(htlc.AmtMsat),
+			CustomRecords:     htlc.CustomRecords,
+			State:             htlc.State,
+			CustomChannelData: htlc.CustomChannelData,
 		}
 
 		if htlc.AcceptTime != 0 {
@@ -1972,6 +2045,10 @@ type PendingChannel struct {
 
 	// ChannelInitiator indicates which party opened the channel.
 	ChannelInitiator Initiator
+
+	// CustomChannelData is an optional field that can be used to store
+	// data for custom channels.
+	CustomChannelData []byte
 }
 
 // NewPendingChannel creates a pending channel from the rpc struct.
@@ -1994,12 +2071,13 @@ func NewPendingChannel(channel *lnrpc.PendingChannelsResponse_PendingChannel) (
 	}
 
 	return &PendingChannel{
-		ChannelPoint:     outpoint,
-		PubKeyBytes:      peer,
-		Capacity:         btcutil.Amount(channel.Capacity),
-		LocalBalance:     btcutil.Amount(channel.LocalBalance),
-		RemoteBalance:    btcutil.Amount(channel.RemoteBalance),
-		ChannelInitiator: initiator,
+		ChannelPoint:      outpoint,
+		PubKeyBytes:       peer,
+		Capacity:          btcutil.Amount(channel.Capacity),
+		LocalBalance:      btcutil.Amount(channel.LocalBalance),
+		RemoteBalance:     btcutil.Amount(channel.RemoteBalance),
+		ChannelInitiator:  initiator,
+		CustomChannelData: channel.CustomChannelData,
 	}, nil
 }
 
@@ -2474,6 +2552,10 @@ type Payment struct {
 
 	// SequenceNumber is a unique id for each payment.
 	SequenceNumber uint64
+
+	// FirstHopCustomRecords holds the custom TLV records that were sent to
+	// the first hop as part of the wire message.
+	FirstHopCustomRecords map[uint64][]byte
 }
 
 // ListPaymentsRequest contains the request parameters for a paginated
@@ -2541,9 +2623,14 @@ func (s *lightningClient) ListPayments(ctx context.Context,
 			PaymentRequest: payment.PaymentRequest,
 			Status:         status,
 			Htlcs:          payment.Htlcs,
-			Amount:         lnwire.MilliSatoshi(payment.ValueMsat),
-			Fee:            lnwire.MilliSatoshi(payment.FeeMsat),
-			SequenceNumber: payment.PaymentIndex,
+			Amount: lnwire.MilliSatoshi(
+				payment.ValueMsat,
+			),
+			Fee: lnwire.MilliSatoshi(
+				payment.FeeMsat,
+			),
+			SequenceNumber:        payment.PaymentIndex,
+			FirstHopCustomRecords: payment.FirstHopCustomRecords,
 		}
 
 		// Add our preimage if it is known.
@@ -3138,6 +3225,17 @@ func (s *lightningClient) CloseChannel(ctx context.Context,
 	return updateChan, errChan, nil
 }
 
+type InboundFee struct {
+	// BaseFeeMsat is the inbound base fee charged regardless of the number
+	// of milli-satoshis received in the channel. By default, only negative
+	// values are accepted.
+	BaseFeeMsat int32
+
+	// FeeRatePPM is the effective inbound fee rate in micro-satoshis (parts
+	// per million). By default, only negative values are accepted.
+	FeeRatePPM int32
+}
+
 // PolicyUpdateRequest holds UpdateChanPolicy request data.
 type PolicyUpdateRequest struct {
 	// BaseFeeMsat is the base fee charged regardless of the number of
@@ -3162,6 +3260,10 @@ type PolicyUpdateRequest struct {
 
 	// MinHtlcMsatSpecified if true, MinHtlcMsat is applied.
 	MinHtlcMsatSpecified bool
+
+	// InboundFee holds the optional inbound fee. If unset, the previously
+	// set value will be used.
+	InboundFee *InboundFee
 }
 
 // UpdateChanPolicy updates the channel policy for the passed chanPoint. If
@@ -3179,6 +3281,13 @@ func (s *lightningClient) UpdateChanPolicy(ctx context.Context,
 		FeeRate:       req.FeeRate,
 		TimeLockDelta: req.TimeLockDelta,
 		MaxHtlcMsat:   req.MaxHtlcMsat,
+	}
+
+	if req.InboundFee != nil {
+		rpcReq.InboundFee = &lnrpc.InboundFee{
+			BaseFeeMsat: req.InboundFee.BaseFeeMsat,
+			FeeRatePpm:  req.InboundFee.FeeRatePPM,
+		}
 	}
 
 	if req.MinHtlcMsatSpecified {
@@ -3231,6 +3340,18 @@ type RoutingPolicy struct {
 
 	// LastUpdate is the last update time for the edge policy.
 	LastUpdate time.Time
+
+	// CustomRecords is a set of feature id-value pairs that are used to
+	// advertise additional information about an edge.
+	CustomRecords map[uint64][]byte
+
+	// InboundBaseFeeMsat is the inbound base fee charged regardless of the
+	// number of milli-satoshis received in the channel.
+	InboundBaseFeeMsat int32
+
+	// InboundFeeRatePPM is the effective inbound fee rate in micro-satoshis
+	// (parts per million).
+	InboundFeeRatePPM int32
 }
 
 // ChannelEdge holds the channel edge information and routing policies.
@@ -3266,13 +3387,16 @@ func getRoutingPolicy(policy *lnrpc.RoutingPolicy) *RoutingPolicy {
 	}
 
 	return &RoutingPolicy{
-		TimeLockDelta:    policy.TimeLockDelta,
-		MinHtlcMsat:      policy.MinHtlc,
-		MaxHtlcMsat:      policy.MaxHtlcMsat,
-		FeeBaseMsat:      policy.FeeBaseMsat,
-		FeeRateMilliMsat: policy.FeeRateMilliMsat,
-		Disabled:         policy.Disabled,
-		LastUpdate:       time.Unix(int64(policy.LastUpdate), 0),
+		TimeLockDelta:      policy.TimeLockDelta,
+		MinHtlcMsat:        policy.MinHtlc,
+		MaxHtlcMsat:        policy.MaxHtlcMsat,
+		FeeBaseMsat:        policy.FeeBaseMsat,
+		FeeRateMilliMsat:   policy.FeeRateMilliMsat,
+		Disabled:           policy.Disabled,
+		LastUpdate:         time.Unix(int64(policy.LastUpdate), 0),
+		CustomRecords:      policy.CustomRecords,
+		InboundBaseFeeMsat: policy.InboundFeeBaseMsat,
+		InboundFeeRatePPM:  policy.InboundFeeRateMilliMsat,
 	}
 }
 
@@ -3341,6 +3465,18 @@ func (s *lightningClient) ListPeers(ctx context.Context) ([]Peer,
 
 		pingTime := time.Microsecond * time.Duration(peer.PingTime)
 
+		var featureBits []lnwire.FeatureBit
+		for rpcBit := range peer.Features {
+			featureBits = append(
+				featureBits, lnwire.FeatureBit(rpcBit),
+			)
+		}
+
+		peerFeatures := lnwire.NewFeatureVector(
+			lnwire.NewRawFeatureVector(featureBits...),
+			lnwire.Features,
+		)
+
 		peers[i] = Peer{
 			Pubkey:        pk,
 			Address:       peer.Address,
@@ -3350,6 +3486,7 @@ func (s *lightningClient) ListPeers(ctx context.Context) ([]Peer,
 			PingTime:      pingTime,
 			Sent:          btcutil.Amount(peer.SatSent),
 			Received:      btcutil.Amount(peer.SatRecv),
+			Features:      peerFeatures,
 		}
 	}
 
@@ -3423,8 +3560,11 @@ func (s *lightningClient) ChannelBalance(ctx context.Context) (*ChannelBalance,
 	}
 
 	return &ChannelBalance{
-		Balance:        btcutil.Amount(resp.Balance),            // nolint:staticcheck
-		PendingBalance: btcutil.Amount(resp.PendingOpenBalance), // nolint:staticcheck
+		//nolint:staticcheck
+		Balance: btcutil.Amount(resp.Balance),
+		//nolint:staticcheck
+		PendingBalance:    btcutil.Amount(resp.PendingOpenBalance),
+		CustomChannelData: resp.CustomChannelData,
 	}, nil
 }
 
@@ -4153,6 +4293,41 @@ func (s *lightningClient) SendCustomMessage(ctx context.Context,
 	return err
 }
 
+// SignMessage signs a message with this node's private key.
+// The returned signature string is zbase32 encoded and pubkey
+// recoverable, meaning that only the message digest and signature
+// are needed for verification.
+func (s *lightningClient) SignMessage(ctx context.Context,
+	data []byte) (string, error) {
+
+	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
+	rpcReq := &lnrpc.SignMessageRequest{Msg: data}
+	rpcRes, err := s.client.SignMessage(rpcCtx, rpcReq)
+	if err != nil {
+		return "", err
+	}
+
+	return rpcRes.Signature, nil
+}
+
+// VerifyMessage verifies a signature over a msg. The signature must
+// be zbase32 encoded and signed by an active node in the resident
+// node's channel database. In addition to returning the validity of
+// the signature, VerifyMessage also returns the recovered pubkey
+// from the signature.
+func (s *lightningClient) VerifyMessage(ctx context.Context,
+	data []byte, signature string) (bool, string, error) {
+
+	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
+	rpcReq := &lnrpc.VerifyMessageRequest{Msg: data, Signature: signature}
+	rpcRes, err := s.client.VerifyMessage(rpcCtx, rpcReq)
+	if err != nil {
+		return false, "", err
+	}
+
+	return rpcRes.Valid, rpcRes.Pubkey, nil
+}
+
 // SubscribeCustomMessages subscribes to a stream of custom messages, optionally
 // filtering by peer and message type. The channels returned will be closed
 // when the subscription exits.
@@ -4343,4 +4518,18 @@ func (s *lightningClient) EstimateFees(ctx context.Context, txBatch map[string]i
 	}
 
 	return resp, nil
+}
+
+// ListAliases returns the set of all aliases that have ever existed with their
+// confirmed SCID (if it exists) and/or the base SCID (in the case of zero
+// conf).
+func (s *lightningClient) ListAliases(
+	ctx context.Context) ([]*lnrpc.AliasMap, error) {
+
+	res, err := s.client.ListAliases(ctx, &lnrpc.ListAliasesRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	return res.AliasMaps, nil
 }
