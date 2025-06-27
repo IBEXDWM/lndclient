@@ -1,101 +1,93 @@
-run:
-  # timeout for analysis
-  timeout: 4m
-  go: "1.23"
-
 linters-settings:
-  govet:
-    # Don't report about shadowed variables
-    shadow: false
-  gofmt:
-    # simplify code: gofmt with `-s` option, true by default
-    simplify: true
+  errcheck:
+    check-type-assertions: true
+  goconst:
+    min-len: 2
+    min-occurrences: 3
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - sloppyReassign
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+  exhaustive:
+    # check switch statements in generated files also
+    check-generated: false
+    # presence of "default" case in switch statements satisfies exhaustiveness,
+    # even if all enum members are not listed
+    default-signifies-exhaustive: true
+  goimports:
+    # put imports beginning with prefix after 3rd-party packages;
+    # it's a comma-separated list of prefixes
+    local-prefixes: github.com/*
+  mnd:
+    checks:
+      - case
+      - return
+      - assign
   tagliatelle:
+    # check the struck tag name case
     case:
+      # use the struct field name to check the name of the struct tag
+      use-field-name: false
       rules:
-        json: snake
-  whitespace:
-    multi-func: true
-    multi-if: true
-  gosec:
-    excludes:
-      - G402 # Look for bad TLS connection settings.
-      - G306 # Poor file permissions used when writing to a new file.
-      - G115 # Integer overflow conversion.
-  staticcheck:
-    checks: ["-SA1019"]
+        # any struct tag type can be used.
+        # support string case: `camel`, `pascal`, `kebab`, `snake`, `goCamel`, `goPascal`, `goKebab`, `goSnake`, `upper`, `lower`
+        json: camel
+        db: snake
+  gocyclo:
+    min-complexity: 35
+  revive:
+    rules:
+      - name: dot-imports
+        disabled: true
 
 linters:
-  enable-all: true
-  disable:
-  # Global variables are used in many places throughout the code base.
-  - gochecknoglobals
+  disable-all: true
+  enable:
+    - bodyclose
+    - dogsled
+    - errcheck
+    - copyloopvar
+    - exhaustive
+    - goconst
+    - gocritic
+    - gofmt
+    - goimports
+    - mnd
+    - gocyclo
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - misspell
+    - nolintlint
+    - nakedret
+    - prealloc
+    - predeclared
+    - revive
+    - staticcheck
+    - stylecheck
+    - thelper
+    - tparallel
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+    - tagliatelle
 
-  # Some lines are over 80 characters on purpose and we don't want to make them
-  # even longer by marking them as 'nolint'.
-  - lll
+run:
+  issues-exit-code: 1
+  timeout: 5m
 
-  # We want to allow short variable names.
-  - varnamelen
-
-  # We want to allow TODOs.
-  - godox
-
-  # We have long functions, especially in tests. Moving or renaming those would
-  # trigger funlen problems that we may not want to solve at that time.
-  - funlen
-
-  # Disable for now as we haven't yet tuned the sensitivity to our codebase
-  # yet. Enabling by default for example, would also force new contributors to
-  # potentially extensively refactor code, when they want to smaller change to
-  # land.
-  - gocyclo
-  - gocognit
-  - cyclop
-
-  # Instances of table driven tests that don't pre-allocate shouldn't trigger
-  # the linter.
-  - prealloc
-
-  # Init functions are used by loggers throughout the codebase.
-  - gochecknoinits
-
-  # Causes stack overflow, see https://github.com/polyfloyd/go-errorlint/issues/19.
-  - errorlint
-
-  # New linters that need a code adjustment first.
-  - wrapcheck
-  - nolintlint
-  - paralleltest
-  - tparallel
-  - testpackage
-  - gofumpt
-  - gomoddirectives
-  - ireturn
-  - maintidx
-  - nlreturn
-  - dogsled
-  - gci
-  - containedctx
-  - contextcheck
-  - errname
-  - err113
-  - mnd
-  - noctx
-  - nestif
-  - wsl
-  - exhaustive
-  - forcetypeassert
-  - nilerr
-  - nilnil
-  - stylecheck
-  - thelper
-  - exhaustruct
-  - importas
-  - interfacebloat
-  - protogetter
-  - revive
-  - depguard
-  - mnd
-  - perfsprint
-  - inamedparam
+output:
+  formats:
+    - format: colored-line-number
+  sort-results: true
