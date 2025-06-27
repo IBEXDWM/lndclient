@@ -560,6 +560,14 @@
                 }
             ]
         },
+        "/lnrpc.Lightning/SendCustomMessage": {
+            "permissions": [
+                {
+                    "entity": "peers",
+                    "action": "write"
+                }
+            ]
+        },
         "/lnrpc.Lightning/SendPayment": {
             "permissions": [
                 {
