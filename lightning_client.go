@@ -83,38 +83,55 @@ func WithRemoteMaxHtlc(maxHtlc uint32) OpenChannelOption {
 type LightningClient interface {
 	ServiceClient[lnrpc.LightningClient]
 
-	PayInvoice(ctx context.Context, invoice string,
+	PayInvoice(
+		ctx context.Context, invoice string,
 		maxFee btcutil.Amount,
-		outgoingChannel *uint64) chan PaymentResult
+		outgoingChannel *uint64,
+	) chan PaymentResult
 
 	GetInfo(ctx context.Context) (*Info, error)
 
 	// EstimateFee estimates the total fees for a transaction that pays the
 	// given amount to the passed address.
-	EstimateFee(ctx context.Context, address btcutil.Address,
-		amt btcutil.Amount, confTarget int32) (btcutil.Amount, error)
+	EstimateFee(
+		ctx context.Context, address btcutil.Address,
+		amt btcutil.Amount, confTarget int32,
+	) (btcutil.Amount, error)
 
 	// NewAddress generates a new address for the lnd client.
-	NewAddress(ctx context.Context, addressType lnrpc.AddressType) (string, error)
+	NewAddress(ctx context.Context, addressType lnrpc.AddressType) (
+		string,
+		error,
+	)
 
 	// SendMany handles a request for a transaction that creates multiple specified outputs in parallel.
-	SendMany(ctx context.Context, txBatch map[string]int64, satPerVbyte uint64) (string, error)
+	SendMany(
+		ctx context.Context,
+		txBatch map[string]int64,
+		satPerVbyte uint64,
+	) (string, error)
 
 	// EstimateFees estimates the total fees for a batch of transactions that pay the given
 	// amounts to the passed addresses.
-	EstimateFees(ctx context.Context, txBatch map[string]int64) (*lnrpc.EstimateFeeResponse, error)
+	EstimateFees(
+		ctx context.Context,
+		txBatch map[string]int64,
+	) (*lnrpc.EstimateFeeResponse, error)
 
 	// EstimateFeeToP2WSH estimates the total chain fees in satoshis to send
 	// the given amount to a single P2WSH output with the given target
 	// confirmation.
-	EstimateFeeToP2WSH(ctx context.Context, amt btcutil.Amount,
-		confTarget int32) (btcutil.Amount, error)
+	EstimateFeeToP2WSH(
+		ctx context.Context, amt btcutil.Amount,
+		confTarget int32,
+	) (btcutil.Amount, error)
 
 	// WalletBalance returns a summary of the node's wallet balance.
 	WalletBalance(ctx context.Context) (*WalletBalance, error)
 
 	AddInvoice(ctx context.Context, in *invoicesrpc.AddInvoiceData) (
-		lntypes.Hash, string, error)
+		lntypes.Hash, string, error,
+	)
 
 	// LookupInvoice looks up an invoice by hash.
 	LookupInvoice(ctx context.Context, hash lntypes.Hash) (*Invoice, error)
@@ -124,11 +141,16 @@ type LightningClient interface {
 	// limit the block range that we query over. These values can be left
 	// as zero to include all blocks. To include unconfirmed transactions
 	// in the query, endHeight must be set to -1.
-	ListTransactions(ctx context.Context, startHeight, endHeight int32,
-		opts ...ListTransactionsOption) ([]Transaction, error)
+	ListTransactions(
+		ctx context.Context, startHeight, endHeight int32,
+		opts ...ListTransactionsOption,
+	) ([]Transaction, error)
 
 	// ListChannels retrieves all channels of the backing lnd node.
-	ListChannels(ctx context.Context, input *lnrpc.ListChannelsRequest) ([]ChannelInfo, error)
+	ListChannels(
+		ctx context.Context,
+		input *lnrpc.ListChannelsRequest,
+	) ([]ChannelInfo, error)
 
 	// PendingChannels returns a list of lnd's pending channels.
 	PendingChannels(ctx context.Context) (*PendingChannels, error)
@@ -139,15 +161,19 @@ type LightningClient interface {
 	// ForwardingHistory makes a paginated call to our forwarding history
 	// endpoint.
 	ForwardingHistory(ctx context.Context, req ForwardingHistoryRequest) (
-		*ForwardingHistoryResponse, error)
+		*ForwardingHistoryResponse, error,
+	)
 
 	// ListInvoices makes a paginated call to our list invoices endpoint.
 	ListInvoices(ctx context.Context, req ListInvoicesRequest) (
-		*ListInvoicesResponse, error)
+		*ListInvoicesResponse, error,
+	)
 
 	// ListPayments makes a paginated call to our list payments endpoint.
-	ListPayments(ctx context.Context,
-		req ListPaymentsRequest) (*ListPaymentsResponse, error)
+	ListPayments(
+		ctx context.Context,
+		req ListPaymentsRequest,
+	) (*ListPaymentsResponse, error)
 
 	// ChannelBackup retrieves the backup for a particular channel. The
 	// backup is returned as an encrypted chanbackup.Single payload.
@@ -161,44 +187,61 @@ type LightningClient interface {
 	// SubscribeChannelBackups allows a client to subscribe to the most
 	// up-to-date information concerning the state of all channel backups.
 	SubscribeChannelBackups(ctx context.Context) (
-		<-chan lnrpc.ChanBackupSnapshot, <-chan error, error)
+		<-chan lnrpc.ChanBackupSnapshot, <-chan error, error,
+	)
 
 	// SubscribeChannelEvents allows a client to subscribe to updates
 	// relevant to the state of channels. Events include new active
 	// channels, inactive channels, and closed channels.
 	SubscribeChannelEvents(ctx context.Context) (
-		<-chan *ChannelEventUpdate, <-chan error, error)
+		<-chan *ChannelEventUpdate, <-chan error, error,
+	)
 
 	// DecodePaymentRequest decodes a payment request.
-	DecodePaymentRequest(ctx context.Context,
-		payReq string) (*PaymentRequest, error)
+	DecodePaymentRequest(
+		ctx context.Context,
+		payReq string,
+	) (*PaymentRequest, error)
 
 	// OpenChannel opens a channel to the peer provided with the amounts
 	// specified.
-	OpenChannel(ctx context.Context, peer route.Vertex,
+	OpenChannel(
+		ctx context.Context, peer route.Vertex,
 		localSat, pushSat btcutil.Amount, private bool,
-		opts ...OpenChannelOption) (
-		*wire.OutPoint, error)
+		opts ...OpenChannelOption,
+	) (
+		*wire.OutPoint, error,
+	)
 
 	// OpenChannelStream opens a channel to the specified peer and with the
 	// specified arguments and options. This function returns a stream of
 	// updates.
-	OpenChannelStream(ctx context.Context, peer route.Vertex,
+	OpenChannelStream(
+		ctx context.Context, peer route.Vertex,
 		localSat, pushSat btcutil.Amount, private bool,
-		opts ...OpenChannelOption) (<-chan *OpenStatusUpdate,
-		<-chan error, error)
+		opts ...OpenChannelOption,
+	) (
+		<-chan *OpenStatusUpdate,
+		<-chan error, error,
+	)
 
 	// CloseChannel closes the channel provided.
-	CloseChannel(ctx context.Context, channel *wire.OutPoint,
+	CloseChannel(
+		ctx context.Context, channel *wire.OutPoint,
 		force bool, confTarget int32, deliveryAddr btcutil.Address,
-		opts ...CloseChannelOption) (chan CloseChannelUpdate,
-		chan error, error)
+		opts ...CloseChannelOption,
+	) (
+		chan CloseChannelUpdate,
+		chan error, error,
+	)
 
 	// UpdateChanPolicy updates the channel policy for the passed chanPoint.
 	// If the chanPoint is nil, then the policy is applied for all existing
 	// channels.
-	UpdateChanPolicy(ctx context.Context, req PolicyUpdateRequest,
-		chanPoint *wire.OutPoint) error
+	UpdateChanPolicy(
+		ctx context.Context, req PolicyUpdateRequest,
+		chanPoint *wire.OutPoint,
+	) error
 
 	// GetChanInfo returns the channel info for the passed channel,
 	// including the routing policy for both end.
@@ -211,32 +254,42 @@ type LightningClient interface {
 	// permanent is true then we'll attempt to connect to the peer
 	// permanently, meaning that the connection is maintained even if no
 	// channels exist between us and the peer.
-	Connect(ctx context.Context, peer route.Vertex, host string,
-		permanent bool) error
+	Connect(
+		ctx context.Context, peer route.Vertex, host string,
+		permanent bool,
+	) error
 
 	// SendCoins sends the passed amount of (or all) coins to the passed
 	// address. Either amount or sendAll must be specified, while
 	// confTarget, satsPerByte are optional and may be set to zero in which
 	// case automatic conf target and fee will be used. Returns the tx id
 	// upon success.
-	SendCoins(ctx context.Context, addr btcutil.Address,
+	SendCoins(
+		ctx context.Context, addr btcutil.Address,
 		amount btcutil.Amount, sendAll bool, confTarget int32,
-		satsPerByte int64, label string) (string, error)
+		satsPerByte int64, label string,
+	) (string, error)
 
 	// ChannelBalance returns a summary of our channel balances.
 	ChannelBalance(ctx context.Context) (*ChannelBalance, error)
 
 	// GetNodeInfo looks up information for a specific node.
-	GetNodeInfo(ctx context.Context, pubkey route.Vertex,
-		includeChannels bool) (*NodeInfo, error)
+	GetNodeInfo(
+		ctx context.Context, pubkey route.Vertex,
+		includeChannels bool,
+	) (*NodeInfo, error)
 
 	// DescribeGraph returns our view of the graph.
-	DescribeGraph(ctx context.Context, includeUnannounced bool) (*Graph,
-		error)
+	DescribeGraph(ctx context.Context, includeUnannounced bool) (
+		*Graph,
+		error,
+	)
 
 	// SubscribeGraph allows a client to subscribe to gaph topology updates.
-	SubscribeGraph(ctx context.Context) (<-chan *GraphTopologyUpdate,
-		<-chan error, error)
+	SubscribeGraph(ctx context.Context) (
+		<-chan *GraphTopologyUpdate,
+		<-chan error, error,
+	)
 
 	// NetworkInfo returns stats regarding our view of the network.
 	NetworkInfo(ctx context.Context) (*NetworkInfo, error)
@@ -244,37 +297,48 @@ type LightningClient interface {
 	// SubscribeInvoices allows a client to subscribe to updates
 	// of newly added/settled invoices.
 	SubscribeInvoices(ctx context.Context, req InvoiceSubscriptionRequest) (
-		<-chan *Invoice, <-chan error, error)
+		<-chan *Invoice, <-chan error, error,
+	)
 
 	// ListPermissions returns a list of all RPC method URIs and the
 	// macaroon permissions that are required to access them.
-	ListPermissions(ctx context.Context) (map[string][]MacaroonPermission,
-		error)
+	ListPermissions(ctx context.Context) (
+		map[string][]MacaroonPermission,
+		error,
+	)
 
 	// ChannelAcceptor create a channel acceptor using the accept function
 	// passed in. The timeout provided will be used to timeout the passed
 	// accept closure when it exceeds the amount of time we allow. Note that
 	// this amount should be strictly less than lnd's chanacceptor timeout
 	// parameter.
-	ChannelAcceptor(ctx context.Context, timeout time.Duration,
-		accept AcceptorFunction) (chan error, error)
+	ChannelAcceptor(
+		ctx context.Context, timeout time.Duration,
+		accept AcceptorFunction,
+	) (chan error, error)
 
 	// FundingStateStep is a funding related call that allows the execution
 	// of some preparatory steps for a funding workflow or manual
 	// progression of a funding workflow.
 	FundingStateStep(ctx context.Context, req *lnrpc.FundingTransitionMsg) (
-		*lnrpc.FundingStateStepResp, error)
+		*lnrpc.FundingStateStepResp, error,
+	)
 
 	// QueryRoutes can query LND to return a route (with fees) between two
 	// vertices.
 	QueryRoutes(ctx context.Context, req QueryRoutesRequest) (
-		*QueryRoutesResponse, error)
+		*QueryRoutesResponse, error,
+	)
 
 	// CheckMacaroonPermissions allows a client to check the validity of a
 	// macaroon.
-	CheckMacaroonPermissions(ctx context.Context, macaroon []byte,
-		permissions []MacaroonPermission, fullMethod string) (bool,
-		error)
+	CheckMacaroonPermissions(
+		ctx context.Context, macaroon []byte,
+		permissions []MacaroonPermission, fullMethod string,
+	) (
+		bool,
+		error,
+	)
 
 	// RegisterRPCMiddleware adds a new gRPC middleware to the interceptor
 	// chain. A gRPC middleware is software component external to lnd that
@@ -282,23 +346,29 @@ type LightningClient interface {
 	// intercepting/validating incoming gRPC client requests and (if needed)
 	// replacing/overwriting outgoing messages before they're sent to the
 	// client.
-	RegisterRPCMiddleware(ctx context.Context, middlewareName,
+	RegisterRPCMiddleware(
+		ctx context.Context, middlewareName,
 		customCaveatName string, readOnly bool, timeout time.Duration,
-		intercept InterceptFunction) (chan error, error)
+		intercept InterceptFunction,
+	) (chan error, error)
 
 	// SendCustomMessage sends a custom message to a peer.
 	SendCustomMessage(ctx context.Context, msg CustomMessage) error
 
 	// SubscribeCustomMessages creates a subscription to custom messages
 	// received from our peers.
-	SubscribeCustomMessages(ctx context.Context) (<-chan CustomMessage,
-		<-chan error, error)
+	SubscribeCustomMessages(ctx context.Context) (
+		<-chan CustomMessage,
+		<-chan error, error,
+	)
 
 	// SubscribeTransactions creates a uni-directional stream from the
 	// server to the client in which any newly discovered transactions
 	// relevant to the wallet are sent over.
-	SubscribeTransactions(ctx context.Context) (<-chan Transaction,
-		<-chan error, error)
+	SubscribeTransactions(ctx context.Context) (
+		<-chan Transaction,
+		<-chan error, error,
+	)
 
 	// SignMessage signs a message with this node's private key.
 	// The returned signature string is zbase32 encoded and pubkey
@@ -311,8 +381,10 @@ type LightningClient interface {
 	// node's channel database. In addition to returning the validity of
 	// the signature, VerifyMessage also returns the recovered pubkey
 	// from the signature.
-	VerifyMessage(ctx context.Context, data []byte, signature string) (bool,
-		string, error)
+	VerifyMessage(ctx context.Context, data []byte, signature string) (
+		bool,
+		string, error,
+	)
 
 	// ListAliases returns the set of all aliases that have ever existed
 	// with their confirmed SCID (if it exists) and/or the base SCID (in the
@@ -460,8 +532,10 @@ type ChannelInfo struct {
 	PeerAlias string
 }
 
-func (s *lightningClient) newChannelInfo(channel *lnrpc.Channel) (*ChannelInfo,
-	error) {
+func (s *lightningClient) newChannelInfo(channel *lnrpc.Channel) (
+	*ChannelInfo,
+	error,
+) {
 
 	remoteVertex, err := route.NewVertexFromStr(channel.RemotePubkey)
 	if err != nil {
@@ -1123,8 +1197,10 @@ type AcceptorRequest struct {
 	WantsSCIDAlias bool
 }
 
-func newAcceptorRequest(req *lnrpc.ChannelAcceptRequest) (*AcceptorRequest,
-	error) {
+func newAcceptorRequest(req *lnrpc.ChannelAcceptRequest) (
+	*AcceptorRequest,
+	error,
+) {
 
 	pk, err := route.NewVertexFromBytes(req.NodePubkey)
 	if err != nil {
@@ -1163,7 +1239,8 @@ func newAcceptorRequest(req *lnrpc.ChannelAcceptRequest) (*AcceptorRequest,
 		commitmentType = new(lnwallet.CommitmentType)
 		*commitmentType = lnwallet.CommitmentTypeSimpleTaprootOverlay
 	default:
-		return nil, fmt.Errorf("unhandled commitment type %v",
+		return nil, fmt.Errorf(
+			"unhandled commitment type %v",
 			req.CommitmentType)
 	}
 
@@ -1356,8 +1433,10 @@ type lightningClient struct {
 // LightningClient interface.
 var _ LightningClient = (*lightningClient)(nil)
 
-func newLightningClient(conn grpc.ClientConnInterface, timeout time.Duration,
-	params *chaincfg.Params, adminMac serializedMacaroon) *lightningClient {
+func newLightningClient(
+	conn grpc.ClientConnInterface, timeout time.Duration,
+	params *chaincfg.Params, adminMac serializedMacaroon,
+) *lightningClient {
 
 	return &lightningClient{
 		client:   lnrpc.NewLightningClient(conn),
@@ -1382,21 +1461,27 @@ func (s *lightningClient) WaitForFinished() {
 // RawClientWithMacAuth returns a context with the proper macaroon
 // authentication, the default RPC timeout, and the raw client.
 func (s *lightningClient) RawClientWithMacAuth(
-	parentCtx context.Context) (context.Context, time.Duration,
-	lnrpc.LightningClient) {
+	parentCtx context.Context,
+) (
+	context.Context, time.Duration,
+	lnrpc.LightningClient,
+) {
 
 	return s.adminMac.WithMacaroonAuth(parentCtx), s.timeout, s.client
 }
 
 // WalletBalance returns a summary of the node's wallet balance.
 func (s *lightningClient) WalletBalance(ctx context.Context) (
-	*WalletBalance, error) {
+	*WalletBalance, error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
-	resp, err := s.client.WalletBalance(rpcCtx, &lnrpc.WalletBalanceRequest{})
+	resp, err := s.client.WalletBalance(
+		rpcCtx,
+		&lnrpc.WalletBalanceRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -1447,9 +1532,12 @@ func newInfo(resp *lnrpc.GetInfoResponse) (*Info, error) {
 
 // EstimateFee estimates the total fees for a transaction that pays the given
 // amount to the passed address.
-func (s *lightningClient) EstimateFee(ctx context.Context,
-	address btcutil.Address, amt btcutil.Amount, confTarget int32) (
-	btcutil.Amount, error) {
+func (s *lightningClient) EstimateFee(
+	ctx context.Context,
+	address btcutil.Address, amt btcutil.Amount, confTarget int32,
+) (
+	btcutil.Amount, error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -1472,8 +1560,10 @@ func (s *lightningClient) EstimateFee(ctx context.Context,
 
 // EstimateFeeToP2WSH estimates the total chain fees in satoshis to send the
 // given amount to a single P2WSH output with the given target confirmation.
-func (s *lightningClient) EstimateFeeToP2WSH(ctx context.Context,
-	amt btcutil.Amount, confTarget int32) (btcutil.Amount, error) {
+func (s *lightningClient) EstimateFeeToP2WSH(
+	ctx context.Context,
+	amt btcutil.Amount, confTarget int32,
+) (btcutil.Amount, error) {
 
 	// Generate a dummy p2wsh address for fee estimation.
 	wsh := [32]byte{}
@@ -1488,8 +1578,10 @@ func (s *lightningClient) EstimateFeeToP2WSH(ctx context.Context,
 }
 
 // PayInvoice pays an invoice.
-func (s *lightningClient) PayInvoice(ctx context.Context, invoice string,
-	maxFee btcutil.Amount, outgoingChannel *uint64) chan PaymentResult {
+func (s *lightningClient) PayInvoice(
+	ctx context.Context, invoice string,
+	maxFee btcutil.Amount, outgoingChannel *uint64,
+) chan PaymentResult {
 
 	// Use buffer to prevent blocking.
 	paymentChan := make(chan PaymentResult, 1)
@@ -1511,8 +1603,10 @@ func (s *lightningClient) PayInvoice(ctx context.Context, invoice string,
 
 // payInvoice tries to send a payment and returns the final result. If
 // necessary, it will poll lnd for the payment result.
-func (s *lightningClient) payInvoice(ctx context.Context, invoice string,
-	maxFee btcutil.Amount, outgoingChannel *uint64) *PaymentResult {
+func (s *lightningClient) payInvoice(
+	ctx context.Context, invoice string,
+	maxFee btcutil.Amount, outgoingChannel *uint64,
+) *PaymentResult {
 
 	payReq, err := zpay32.Decode(invoice, s.params)
 	if err != nil {
@@ -1630,8 +1724,10 @@ func (s *lightningClient) payInvoice(ctx context.Context, invoice string,
 	}
 }
 
-func (s *lightningClient) AddInvoice(ctx context.Context,
-	in *invoicesrpc.AddInvoiceData) (lntypes.Hash, string, error) {
+func (s *lightningClient) AddInvoice(
+	ctx context.Context,
+	in *invoicesrpc.AddInvoiceData,
+) (lntypes.Hash, string, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -1796,8 +1892,10 @@ func newPendingHtlc(rpcHtlc *lnrpc.HTLC) (*PendingHtlc, error) {
 
 // LookupInvoice looks up an invoice in lnd, it will error if the invoice is
 // not known to lnd.
-func (s *lightningClient) LookupInvoice(ctx context.Context,
-	hash lntypes.Hash) (*Invoice, error) {
+func (s *lightningClient) LookupInvoice(
+	ctx context.Context,
+	hash lntypes.Hash,
+) (*Invoice, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -1889,7 +1987,8 @@ func unmarshalInvoice(resp *lnrpc.Invoice) (*Invoice, error) {
 		invoice.State = invpkg.ContractCanceled
 
 	default:
-		return nil, fmt.Errorf("unknown invoice state: %v",
+		return nil, fmt.Errorf(
+			"unknown invoice state: %v",
 			resp.State)
 	}
 
@@ -1915,9 +2014,13 @@ func WithTransactionsAccount(account string) ListTransactionsOption {
 }
 
 // ListTransactions returns all known transactions of the backing lnd node.
-func (s *lightningClient) ListTransactions(ctx context.Context, startHeight,
-	endHeight int32, opts ...ListTransactionsOption) ([]Transaction,
-	error) {
+func (s *lightningClient) ListTransactions(
+	ctx context.Context, startHeight,
+	endHeight int32, opts ...ListTransactionsOption,
+) (
+	[]Transaction,
+	error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -1991,18 +2094,8 @@ func (s *lightningClient) ListChannels(
 	ctx context.Context,
 	input *lnrpc.ListChannelsRequest,
 ) ([]ChannelInfo, error) {
-
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-
-	request := &lnrpc.ListChannelsRequest{
-		ActiveOnly: activeOnly,
-		PublicOnly: publicOnly,
-	}
-
-	for _, opt := range opts {
-		opt(request)
-	}
 
 	response, err := s.client.ListChannels(
 		s.adminMac.WithMacaroonAuth(rpcCtx),
@@ -2067,7 +2160,8 @@ type PendingChannel struct {
 
 // NewPendingChannel creates a pending channel from the rpc struct.
 func NewPendingChannel(channel *lnrpc.PendingChannelsResponse_PendingChannel) (
-	*PendingChannel, error) {
+	*PendingChannel, error,
+) {
 
 	peer, err := route.NewVertexFromStr(channel.RemoteNodePub)
 	if err != nil {
@@ -2151,8 +2245,10 @@ type WaitingCloseChannel struct {
 }
 
 // PendingChannels returns a list of lnd's pending channels.
-func (s *lightningClient) PendingChannels(ctx context.Context) (*PendingChannels,
-	error) {
+func (s *lightningClient) PendingChannels(ctx context.Context) (
+	*PendingChannels,
+	error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -2166,9 +2262,15 @@ func (s *lightningClient) PendingChannels(ctx context.Context) (*PendingChannels
 	}
 
 	pending := &PendingChannels{
-		PendingForceClose: make([]ForceCloseChannel, len(resp.PendingForceClosingChannels)),
-		PendingOpen:       make([]PendingChannel, len(resp.PendingOpenChannels)),
-		WaitingClose:      make([]WaitingCloseChannel, len(resp.WaitingCloseChannels)),
+		PendingForceClose: make(
+			[]ForceCloseChannel,
+			len(resp.PendingForceClosingChannels)),
+		PendingOpen: make(
+			[]PendingChannel,
+			len(resp.PendingOpenChannels)),
+		WaitingClose: make(
+			[]WaitingCloseChannel,
+			len(resp.WaitingCloseChannels)),
 	}
 
 	for i, force := range resp.PendingForceClosingChannels {
@@ -2249,7 +2351,8 @@ func (s *lightningClient) PendingChannels(ctx context.Context) (*PendingChannels
 }
 
 func getClosedChannel(closeSummary *lnrpc.ChannelCloseSummary) (
-	*ClosedChannel, error) {
+	*ClosedChannel, error,
+) {
 
 	remote, err := route.NewVertexFromStr(closeSummary.RemotePubkey)
 	if err != nil {
@@ -2288,8 +2391,10 @@ func getClosedChannel(closeSummary *lnrpc.ChannelCloseSummary) (
 }
 
 // ClosedChannels returns a list of our closed channels.
-func (s *lightningClient) ClosedChannels(ctx context.Context) ([]ClosedChannel,
-	error) {
+func (s *lightningClient) ClosedChannels(ctx context.Context) (
+	[]ClosedChannel,
+	error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -2343,8 +2448,10 @@ func rpcCloseType(t lnrpc.ChannelCloseSummary_ClosureType) (CloseType, error) {
 // rpcCloseInitiator maps a close initiator to our local type. Since this field
 // is not always set in lnd for older channels, also use our close type to infer
 // who initiated the close when we have force closes.
-func rpcCloseInitiator(initiator lnrpc.Initiator,
-	closeType CloseType) (Initiator, error) {
+func rpcCloseInitiator(
+	initiator lnrpc.Initiator,
+	closeType CloseType,
+) (Initiator, error) {
 
 	// Since our close type is always set on the rpc, we first check whether
 	// we can figure out the close initiator from this value. This is only
@@ -2378,8 +2485,9 @@ func getInitiator(initiator lnrpc.Initiator) (Initiator, error) {
 		return InitiatorUnrecorded, nil
 
 	default:
-		return InitiatorUnrecorded, fmt.Errorf("unknown "+
-			"initiator: %v", initiator)
+		return InitiatorUnrecorded, fmt.Errorf(
+			"unknown "+
+				"initiator: %v", initiator)
 	}
 }
 
@@ -2435,8 +2543,10 @@ type ForwardingEvent struct {
 // ForwardingHistory returns a set of forwarding events for the period queried.
 // Note that this call is paginated, and the information required to make
 // subsequent calls is provided in the response.
-func (s *lightningClient) ForwardingHistory(ctx context.Context,
-	req ForwardingHistoryRequest) (*ForwardingHistoryResponse, error) {
+func (s *lightningClient) ForwardingHistory(
+	ctx context.Context,
+	req ForwardingHistoryRequest,
+) (*ForwardingHistoryResponse, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -2457,7 +2567,9 @@ func (s *lightningClient) ForwardingHistory(ctx context.Context,
 	events := make([]ForwardingEvent, len(response.ForwardingEvents))
 	for i, event := range response.ForwardingEvents {
 		events[i] = ForwardingEvent{
-			Timestamp:     time.Unix(int64(event.Timestamp), 0), // nolint:staticcheck
+			Timestamp: time.Unix(
+				int64(event.Timestamp),
+				0), // nolint:staticcheck
 			ChannelIn:     event.ChanIdIn,
 			ChannelOut:    event.ChanIdOut,
 			AmountMsatIn:  lnwire.MilliSatoshi(event.AmtInMsat),
@@ -2502,8 +2614,10 @@ type ListInvoicesResponse struct {
 }
 
 // ListInvoices returns a list of invoices from our node.
-func (s *lightningClient) ListInvoices(ctx context.Context,
-	req ListInvoicesRequest) (*ListInvoicesResponse, error) {
+func (s *lightningClient) ListInvoices(
+	ctx context.Context,
+	req ListInvoicesRequest,
+) (*ListInvoicesResponse, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -2602,8 +2716,10 @@ type ListPaymentsResponse struct {
 }
 
 // ListPayments makes a paginated call to our listpayments endpoint.
-func (s *lightningClient) ListPayments(ctx context.Context,
-	req ListPaymentsRequest) (*ListPaymentsResponse, error) {
+func (s *lightningClient) ListPayments(
+	ctx context.Context,
+	req ListPaymentsRequest,
+) (*ListPaymentsResponse, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -2670,8 +2786,10 @@ func (s *lightningClient) ListPayments(ctx context.Context,
 
 // ChannelBackup retrieves the backup for a particular channel. The backup is
 // returned as an encrypted chanbackup.Single payload.
-func (s *lightningClient) ChannelBackup(ctx context.Context,
-	channelPoint wire.OutPoint) ([]byte, error) {
+func (s *lightningClient) ChannelBackup(
+	ctx context.Context,
+	channelPoint wire.OutPoint,
+) ([]byte, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -2726,8 +2844,10 @@ func getOutPoint(txID []byte, idx uint32) (*wire.OutPoint, error) {
 // getChannelEventUpdate converts an lnrpc.ChannelEventUpdate to the higher
 // level ChannelEventUpdate.
 func (s *lightningClient) getChannelEventUpdate(
-	rpcChannelEventUpdate *lnrpc.ChannelEventUpdate) (
-	*ChannelEventUpdate, error) {
+	rpcChannelEventUpdate *lnrpc.ChannelEventUpdate,
+) (
+	*ChannelEventUpdate, error,
+) {
 
 	result := &ChannelEventUpdate{}
 	var err error
@@ -2801,7 +2921,8 @@ func (s *lightningClient) getChannelEventUpdate(
 		}
 
 	default:
-		return nil, fmt.Errorf("unhandled update type: %v",
+		return nil, fmt.Errorf(
+			"unhandled update type: %v",
 			rpcChannelEventUpdate.Type.String())
 	}
 
@@ -2812,7 +2933,8 @@ func (s *lightningClient) getChannelEventUpdate(
 // the state of channels. Events include new active channels, inactive channels,
 // and closed channels.
 func (s *lightningClient) SubscribeChannelEvents(ctx context.Context) (
-	<-chan *ChannelEventUpdate, <-chan error, error) {
+	<-chan *ChannelEventUpdate, <-chan error, error,
+) {
 
 	updateStream, err := s.client.SubscribeChannelEvents(
 		s.adminMac.WithMacaroonAuth(ctx),
@@ -2857,7 +2979,8 @@ func (s *lightningClient) SubscribeChannelEvents(ctx context.Context) (
 // most up to date information concerning the state of all channel
 // backups.
 func (s *lightningClient) SubscribeChannelBackups(ctx context.Context) (
-	<-chan lnrpc.ChanBackupSnapshot, <-chan error, error) {
+	<-chan lnrpc.ChanBackupSnapshot, <-chan error, error,
+) {
 
 	backupStream, err := s.client.SubscribeChannelBackups(
 		s.adminMac.WithMacaroonAuth(ctx),
@@ -2918,17 +3041,20 @@ type PaymentRequest struct {
 }
 
 // DecodePaymentRequest decodes a payment request.
-func (s *lightningClient) DecodePaymentRequest(ctx context.Context,
-	payReq string) (*PaymentRequest, error) {
+func (s *lightningClient) DecodePaymentRequest(
+	ctx context.Context,
+	payReq string,
+) (*PaymentRequest, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
 
-	resp, err := s.client.DecodePayReq(rpcCtx, &lnrpc.PayReqString{
-		PayReq: payReq,
-	})
+	resp, err := s.client.DecodePayReq(
+		rpcCtx, &lnrpc.PayReqString{
+			PayReq: payReq,
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -2966,9 +3092,11 @@ func (s *lightningClient) DecodePaymentRequest(ctx context.Context,
 }
 
 // OpenChannel opens a channel to the peer provided with the amounts specified.
-func (s *lightningClient) OpenChannel(ctx context.Context, peer route.Vertex,
+func (s *lightningClient) OpenChannel(
+	ctx context.Context, peer route.Vertex,
 	localSat, pushSat btcutil.Amount, private bool,
-	opts ...OpenChannelOption) (*wire.OutPoint, error) {
+	opts ...OpenChannelOption,
+) (*wire.OutPoint, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -3000,7 +3128,8 @@ func (s *lightningClient) OpenChannel(ctx context.Context, peer route.Vertex,
 		hash, err = chainhash.NewHashFromStr(h.FundingTxidStr)
 
 	default:
-		return nil, fmt.Errorf("unexpected outpoint type: %T",
+		return nil, fmt.Errorf(
+			"unexpected outpoint type: %T",
 			chanPoint.FundingTxid)
 	}
 	if err != nil {
@@ -3016,7 +3145,8 @@ func (s *lightningClient) OpenChannel(ctx context.Context, peer route.Vertex,
 // getOpenStatusUpdate converts an lnrpc.OpenStatusUpdate to the higher level
 // OpenStatusUpdate.
 func (s *lightningClient) getOpenStatusUpdate(
-	rpcUpdate *lnrpc.OpenStatusUpdate) *OpenStatusUpdate {
+	rpcUpdate *lnrpc.OpenStatusUpdate,
+) *OpenStatusUpdate {
 
 	result := &OpenStatusUpdate{}
 
@@ -3037,10 +3167,14 @@ func (s *lightningClient) getOpenStatusUpdate(
 // OpenChannelStream opens a channel to the specified peer and with the
 // specified arguments and options. This function returns a stream of
 // updates.
-func (s *lightningClient) OpenChannelStream(ctx context.Context, peer route.Vertex,
+func (s *lightningClient) OpenChannelStream(
+	ctx context.Context, peer route.Vertex,
 	localSat, pushSat btcutil.Amount, private bool,
-	opts ...OpenChannelOption) (<-chan *OpenStatusUpdate, <-chan error,
-	error) {
+	opts ...OpenChannelOption,
+) (
+	<-chan *OpenStatusUpdate, <-chan error,
+	error,
+) {
 
 	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
 
@@ -3151,10 +3285,13 @@ func WithNoWait() CloseChannelOption {
 // are no more updates to be sent. It takes an optional delivery address that
 // funds will be paid out to in the case where we cooperative close a channel
 // that *does not* have an upfront shutdown address set.
-func (s *lightningClient) CloseChannel(ctx context.Context,
+func (s *lightningClient) CloseChannel(
+	ctx context.Context,
 	channel *wire.OutPoint, force bool, confTarget int32,
-	deliveryAddr btcutil.Address, opts ...CloseChannelOption) (
-	chan CloseChannelUpdate, chan error, error) {
+	deliveryAddr btcutil.Address, opts ...CloseChannelOption,
+) (
+	chan CloseChannelUpdate, chan error, error,
+) {
 
 	var (
 		rpcCtx  = s.adminMac.WithMacaroonAuth(ctx)
@@ -3262,8 +3399,11 @@ func (s *lightningClient) CloseChannel(ctx context.Context,
 				sendUpdate(closeUpdate)
 
 			default:
-				sendErr(fmt.Errorf("unknown channel close "+
-					"update: %T", resp.Update))
+				sendErr(
+					fmt.Errorf(
+						"unknown channel close "+
+							"update: %T",
+						resp.Update))
 				return
 			}
 		}
@@ -3315,8 +3455,10 @@ type PolicyUpdateRequest struct {
 
 // UpdateChanPolicy updates the channel policy for the passed chanPoint. If
 // the chanPoint is nil, then the policy is applied for all existing channels.
-func (s *lightningClient) UpdateChanPolicy(ctx context.Context,
-	req PolicyUpdateRequest, chanPoint *wire.OutPoint) error {
+func (s *lightningClient) UpdateChanPolicy(
+	ctx context.Context,
+	req PolicyUpdateRequest, chanPoint *wire.OutPoint,
+) error {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -3450,16 +3592,18 @@ func getRoutingPolicy(policy *lnrpc.RoutingPolicy) *RoutingPolicy {
 // GetChanInfo returns the channel info for the passed channel, including the
 // routing policy for both end.
 func (s *lightningClient) GetChanInfo(ctx context.Context, channelID uint64) (
-	*ChannelEdge, error) {
+	*ChannelEdge, error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
 
-	rpcRes, err := s.client.GetChanInfo(rpcCtx, &lnrpc.ChanInfoRequest{
-		ChanId: channelID,
-	})
+	rpcRes, err := s.client.GetChanInfo(
+		rpcCtx, &lnrpc.ChanInfoRequest{
+			ChanId: channelID,
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -3490,8 +3634,10 @@ func newChannelEdge(rpcRes *lnrpc.ChannelEdge) (*ChannelEdge, error) {
 }
 
 // ListPeers gets a list of pubkeys of the peers we are currently connected to.
-func (s *lightningClient) ListPeers(ctx context.Context) ([]Peer,
-	error) {
+func (s *lightningClient) ListPeers(ctx context.Context) (
+	[]Peer,
+	error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -3541,21 +3687,24 @@ func (s *lightningClient) ListPeers(ctx context.Context) ([]Peer,
 }
 
 // Connect attempts to connect to a peer at the host specified.
-func (s *lightningClient) Connect(ctx context.Context, peer route.Vertex,
-	host string, permanent bool) error {
+func (s *lightningClient) Connect(
+	ctx context.Context, peer route.Vertex,
+	host string, permanent bool,
+) error {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
 
-	_, err := s.client.ConnectPeer(rpcCtx, &lnrpc.ConnectPeerRequest{
-		Addr: &lnrpc.LightningAddress{
-			Pubkey: peer.String(),
-			Host:   host,
-		},
-		Perm: permanent,
-	})
+	_, err := s.client.ConnectPeer(
+		rpcCtx, &lnrpc.ConnectPeerRequest{
+			Addr: &lnrpc.LightningAddress{
+				Pubkey: peer.String(),
+				Host:   host,
+			},
+			Perm: permanent,
+		})
 
 	return err
 }
@@ -3564,9 +3713,11 @@ func (s *lightningClient) Connect(ctx context.Context, peer route.Vertex,
 // Either amount or sendAll must be specified, while confTarget, satsPerByte are
 // optional and may be set to zero in which case automatic conf target and fee
 // will be used. Returns the tx id upon success.
-func (s *lightningClient) SendCoins(ctx context.Context, addr btcutil.Address,
+func (s *lightningClient) SendCoins(
+	ctx context.Context, addr btcutil.Address,
 	amount btcutil.Amount, sendAll bool, confTarget int32,
-	satsPerByte int64, label string) (string, error) {
+	satsPerByte int64, label string,
+) (string, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -3591,8 +3742,10 @@ func (s *lightningClient) SendCoins(ctx context.Context, addr btcutil.Address,
 }
 
 // ChannelBalance returns a summary of our channel balances.
-func (s *lightningClient) ChannelBalance(ctx context.Context) (*ChannelBalance,
-	error) {
+func (s *lightningClient) ChannelBalance(ctx context.Context) (
+	*ChannelBalance,
+	error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -3616,18 +3769,21 @@ func (s *lightningClient) ChannelBalance(ctx context.Context) (*ChannelBalance,
 }
 
 // GetNodeInfo returns node info for the pubkey provided.
-func (s *lightningClient) GetNodeInfo(ctx context.Context, pubkey route.Vertex,
-	includeChannels bool) (*NodeInfo, error) {
+func (s *lightningClient) GetNodeInfo(
+	ctx context.Context, pubkey route.Vertex,
+	includeChannels bool,
+) (*NodeInfo, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
 
-	nodeInfo, err := s.client.GetNodeInfo(rpcCtx, &lnrpc.NodeInfoRequest{
-		PubKey:          hex.EncodeToString(pubkey[:]),
-		IncludeChannels: includeChannels,
-	})
+	nodeInfo, err := s.client.GetNodeInfo(
+		rpcCtx, &lnrpc.NodeInfoRequest{
+			PubKey:          hex.EncodeToString(pubkey[:]),
+			IncludeChannels: includeChannels,
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -3657,17 +3813,20 @@ func (s *lightningClient) GetNodeInfo(ctx context.Context, pubkey route.Vertex,
 }
 
 // DescribeGraph returns our view of the graph.
-func (s *lightningClient) DescribeGraph(ctx context.Context,
-	includeUnannounced bool) (*Graph, error) {
+func (s *lightningClient) DescribeGraph(
+	ctx context.Context,
+	includeUnannounced bool,
+) (*Graph, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
 
-	resp, err := s.client.DescribeGraph(rpcCtx, &lnrpc.ChannelGraphRequest{
-		IncludeUnannounced: includeUnannounced,
-	})
+	resp, err := s.client.DescribeGraph(
+		rpcCtx, &lnrpc.ChannelGraphRequest{
+			IncludeUnannounced: includeUnannounced,
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -3700,7 +3859,8 @@ func (s *lightningClient) DescribeGraph(ctx context.Context,
 
 // SubscribeGraph allows a client to subscribe to gaph topology updates.
 func (s *lightningClient) SubscribeGraph(ctx context.Context) (
-	<-chan *GraphTopologyUpdate, <-chan error, error) {
+	<-chan *GraphTopologyUpdate, <-chan error, error,
+) {
 
 	updateStream, err := s.client.SubscribeChannelGraph(
 		s.adminMac.WithMacaroonAuth(ctx),
@@ -3744,7 +3904,8 @@ func (s *lightningClient) SubscribeGraph(ctx context.Context) (
 // getGraphTopologyUpdate converts a lnrpc.GraphTopologyUpdate to the higher
 // level GraphTopologyUpdate.
 func getGraphTopologyUpdate(update *lnrpc.GraphTopologyUpdate) (
-	*GraphTopologyUpdate, error) {
+	*GraphTopologyUpdate, error,
+) {
 
 	result := &GraphTopologyUpdate{
 		NodeUpdates: make([]NodeUpdate, len(update.NodeUpdates)),
@@ -3845,15 +4006,19 @@ func getGraphTopologyUpdate(update *lnrpc.GraphTopologyUpdate) (
 }
 
 // NetworkInfo returns stats regarding our view of the network.
-func (s *lightningClient) NetworkInfo(ctx context.Context) (*NetworkInfo,
-	error) {
+func (s *lightningClient) NetworkInfo(ctx context.Context) (
+	*NetworkInfo,
+	error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
 
-	resp, err := s.client.GetNetworkInfo(rpcCtx, &lnrpc.NetworkInfoRequest{})
+	resp, err := s.client.GetNetworkInfo(
+		rpcCtx,
+		&lnrpc.NetworkInfoRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -3891,8 +4056,10 @@ type InvoiceSubscriptionRequest struct {
 
 // SubscribeInvoices subscribes a client to updates of newly added/settled
 // invoices.
-func (s *lightningClient) SubscribeInvoices(ctx context.Context,
-	req InvoiceSubscriptionRequest) (<-chan *Invoice, <-chan error, error) {
+func (s *lightningClient) SubscribeInvoices(
+	ctx context.Context,
+	req InvoiceSubscriptionRequest,
+) (<-chan *Invoice, <-chan error, error) {
 
 	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
 	invoiceStream, err := s.client.SubscribeInvoices(
@@ -3956,7 +4123,8 @@ func (p *MacaroonPermission) String() string {
 // ListPermissions returns a list of all RPC method URIs and the macaroon
 // permissions that are required to access them.
 func (s *lightningClient) ListPermissions(
-	ctx context.Context) (map[string][]MacaroonPermission, error) {
+	ctx context.Context,
+) (map[string][]MacaroonPermission, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -3986,15 +4154,19 @@ func (s *lightningClient) ListPermissions(
 
 // AcceptorFunction is the signature used for functions passed to our channel
 // acceptor.
-type AcceptorFunction func(context.Context,
-	*AcceptorRequest) (*AcceptorResponse, error)
+type AcceptorFunction func(
+	context.Context,
+	*AcceptorRequest,
+) (*AcceptorResponse, error)
 
 // ChannelAcceptor create a channel acceptor using the accept function passed
 // in. The timeout provided will be used to timeout the passed accept closure
 // when it exceeds the amount of time we allow. Note that this amount should be
 // strictly less than lnd's chanacceptor timeout parameter.
-func (s *lightningClient) ChannelAcceptor(ctx context.Context,
-	timeout time.Duration, accept AcceptorFunction) (chan error, error) {
+func (s *lightningClient) ChannelAcceptor(
+	ctx context.Context,
+	timeout time.Duration, accept AcceptorFunction,
+) (chan error, error) {
 
 	acceptStream, err := s.client.ChannelAcceptor(
 		s.adminMac.WithMacaroonAuth(ctx),
@@ -4020,16 +4192,18 @@ func (s *lightningClient) ChannelAcceptor(ctx context.Context,
 
 			request, err := acceptStream.Recv()
 			if err != nil {
-				errChan <- fmt.Errorf("channel acceptor "+
-					"receive failed: %v", err)
+				errChan <- fmt.Errorf(
+					"channel acceptor "+
+						"receive failed: %v", err)
 
 				return
 			}
 
 			accReq, err := newAcceptorRequest(request)
 			if err != nil {
-				errChan <- fmt.Errorf("invalid request sent "+
-					"from lnd: %v", err)
+				errChan <- fmt.Errorf(
+					"invalid request sent "+
+						"from lnd: %v", err)
 
 				return
 			}
@@ -4041,8 +4215,9 @@ func (s *lightningClient) ChannelAcceptor(ctx context.Context,
 			resp, err := accept(ctxt, accReq)
 			cancel()
 			if err != nil {
-				errChan <- fmt.Errorf("accept function "+
-					"failed: %v", err)
+				errChan <- fmt.Errorf(
+					"accept function "+
+						"failed: %v", err)
 
 				return
 			}
@@ -4062,8 +4237,9 @@ func (s *lightningClient) ChannelAcceptor(ctx context.Context,
 			}
 
 			if err := acceptStream.Send(rpcResp); err != nil {
-				errChan <- fmt.Errorf("channel acceptor send "+
-					"failed: %v", err)
+				errChan <- fmt.Errorf(
+					"channel acceptor send "+
+						"failed: %v", err)
 
 				return
 			}
@@ -4076,8 +4252,10 @@ func (s *lightningClient) ChannelAcceptor(ctx context.Context,
 // FundingStateStep is a funding related call that allows the execution
 // of some preparatory steps for a funding workflow or manual
 // progression of a funding workflow.
-func (s *lightningClient) FundingStateStep(ctx context.Context,
-	req *lnrpc.FundingTransitionMsg) (*lnrpc.FundingStateStepResp, error) {
+func (s *lightningClient) FundingStateStep(
+	ctx context.Context,
+	req *lnrpc.FundingTransitionMsg,
+) (*lnrpc.FundingStateStepResp, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -4113,8 +4291,10 @@ func unmarshallHop(rpcHop *lnrpc.Hop) (*Hop, error) {
 }
 
 // QueryRoutes can query LND to return a route (with fees) between two vertices.
-func (s *lightningClient) QueryRoutes(ctx context.Context,
-	req QueryRoutesRequest) (*QueryRoutesResponse, error) {
+func (s *lightningClient) QueryRoutes(
+	ctx context.Context,
+	req QueryRoutesRequest,
+) (*QueryRoutesResponse, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -4177,9 +4357,13 @@ func (s *lightningClient) QueryRoutes(ctx context.Context,
 }
 
 // CheckMacaroonPermissions allows a client to check the validity of a macaroon.
-func (s *lightningClient) CheckMacaroonPermissions(ctx context.Context,
-	macaroon []byte, permissions []MacaroonPermission, fullMethod string) (bool,
-	error) {
+func (s *lightningClient) CheckMacaroonPermissions(
+	ctx context.Context,
+	macaroon []byte, permissions []MacaroonPermission, fullMethod string,
+) (
+	bool,
+	error,
+) {
 
 	rpcPermissions := make([]*lnrpc.MacaroonPermission, len(permissions))
 	for idx, perm := range permissions {
@@ -4209,17 +4393,21 @@ func (s *lightningClient) CheckMacaroonPermissions(ctx context.Context,
 
 // InterceptFunction is a function type for intercepting RPC calls from a
 // middleware.
-type InterceptFunction func(context.Context,
-	*lnrpc.RPCMiddlewareRequest) (*lnrpc.RPCMiddlewareResponse, error)
+type InterceptFunction func(
+	context.Context,
+	*lnrpc.RPCMiddlewareRequest,
+) (*lnrpc.RPCMiddlewareResponse, error)
 
 // RegisterRPCMiddleware adds a new gRPC middleware to the interceptor chain. A
 // gRPC middleware is software component external to lnd that aims to add
 // additional business logic to lnd by observing/intercepting/validating
 // incoming gRPC client requests and (if needed) replacing/overwriting outgoing
 // messages before they're sent to the client.
-func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
+func (s *lightningClient) RegisterRPCMiddleware(
+	ctx context.Context,
 	middlewareName, customCaveatName string, readOnly bool,
-	timeout time.Duration, intercept InterceptFunction) (chan error, error) {
+	timeout time.Duration, intercept InterceptFunction,
+) (chan error, error) {
 
 	interceptStream, err := s.client.RegisterRPCMiddleware(
 		s.adminMac.WithMacaroonAuth(ctx),
@@ -4253,8 +4441,9 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 	go func() {
 		msg, err := interceptStream.Recv()
 		if err != nil {
-			log.Errorf("Could not receive from interceptor "+
-				"stream: %v", err)
+			log.Errorf(
+				"Could not receive from interceptor "+
+					"stream: %v", err)
 
 			errChan <- err
 			return
@@ -4269,10 +4458,11 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 
 	case registered := <-registerChan:
 		if !registered {
-			return nil, fmt.Errorf("expected a RegComplete " +
-				"message but got none. Make sure lnd is " +
-				"upgraded to a version supporting the new " +
-				"RegComplete message")
+			return nil, fmt.Errorf(
+				"expected a RegComplete " +
+					"message but got none. Make sure lnd is " +
+					"upgraded to a version supporting the new " +
+					"RegComplete message")
 		}
 	}
 
@@ -4291,8 +4481,9 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 
 			request, err := interceptStream.Recv()
 			if err != nil {
-				errChan <- fmt.Errorf("RPC middleware receive "+
-					"failed: %v", err)
+				errChan <- fmt.Errorf(
+					"RPC middleware receive "+
+						"failed: %v", err)
 
 				return
 			}
@@ -4304,15 +4495,17 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 			resp, err := intercept(ctxt, request)
 			cancel()
 			if err != nil {
-				errChan <- fmt.Errorf("intercept function "+
-					"failed: %v", err)
+				errChan <- fmt.Errorf(
+					"intercept function "+
+						"failed: %v", err)
 
 				return
 			}
 
 			if err := interceptStream.Send(resp); err != nil {
-				errChan <- fmt.Errorf("RPC middleware send "+
-					"failed: %v", err)
+				errChan <- fmt.Errorf(
+					"RPC middleware send "+
+						"failed: %v", err)
 
 				return
 			}
@@ -4324,8 +4517,10 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 
 // SendCustomMessage sends a custom message to one of our existing peers. Note
 // that lnd must already be connected to a peer to send it messages.
-func (s *lightningClient) SendCustomMessage(ctx context.Context,
-	msg CustomMessage) error {
+func (s *lightningClient) SendCustomMessage(
+	ctx context.Context,
+	msg CustomMessage,
+) error {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -4345,8 +4540,10 @@ func (s *lightningClient) SendCustomMessage(ctx context.Context,
 // The returned signature string is zbase32 encoded and pubkey
 // recoverable, meaning that only the message digest and signature
 // are needed for verification.
-func (s *lightningClient) SignMessage(ctx context.Context,
-	data []byte) (string, error) {
+func (s *lightningClient) SignMessage(
+	ctx context.Context,
+	data []byte,
+) (string, error) {
 
 	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
 	rpcReq := &lnrpc.SignMessageRequest{Msg: data}
@@ -4363,8 +4560,10 @@ func (s *lightningClient) SignMessage(ctx context.Context,
 // node's channel database. In addition to returning the validity of
 // the signature, VerifyMessage also returns the recovered pubkey
 // from the signature.
-func (s *lightningClient) VerifyMessage(ctx context.Context,
-	data []byte, signature string) (bool, string, error) {
+func (s *lightningClient) VerifyMessage(
+	ctx context.Context,
+	data []byte, signature string,
+) (bool, string, error) {
 
 	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
 	rpcReq := &lnrpc.VerifyMessageRequest{Msg: data, Signature: signature}
@@ -4380,7 +4579,8 @@ func (s *lightningClient) VerifyMessage(ctx context.Context,
 // filtering by peer and message type. The channels returned will be closed
 // when the subscription exits.
 func (s *lightningClient) SubscribeCustomMessages(ctx context.Context) (
-	<-chan CustomMessage, <-chan error, error) {
+	<-chan CustomMessage, <-chan error, error,
+) {
 
 	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
 	rpcReq := &lnrpc.SubscribeCustomMessagesRequest{}
@@ -4442,7 +4642,8 @@ func (s *lightningClient) SubscribeCustomMessages(ctx context.Context) (
 // client in which any newly discovered transactions relevant to the wallet are
 // sent over.
 func (s *lightningClient) SubscribeTransactions(
-	ctx context.Context) (<-chan Transaction, <-chan error, error) {
+	ctx context.Context,
+) (<-chan Transaction, <-chan error, error) {
 
 	rpcCtx := s.adminMac.WithMacaroonAuth(ctx)
 
@@ -4483,7 +4684,8 @@ func (s *lightningClient) SubscribeTransactions(
 
 			tx, err := unmarshallTransaction(rpcTx)
 			if err != nil {
-				errChan <- fmt.Errorf("unmarshall failed: %w",
+				errChan <- fmt.Errorf(
+					"unmarshall failed: %w",
 					err)
 			}
 
@@ -4502,7 +4704,8 @@ func (s *lightningClient) SubscribeTransactions(
 // confirmed SCID (if it exists) and/or the base SCID (in the case of zero
 // conf).
 func (s *lightningClient) ListAliases(
-	ctx context.Context) ([]*lnrpc.AliasMap, error) {
+	ctx context.Context,
+) ([]*lnrpc.AliasMap, error) {
 
 	res, err := s.client.ListAliases(ctx, &lnrpc.ListAliasesRequest{})
 	if err != nil {
@@ -4513,8 +4716,12 @@ func (s *lightningClient) ListAliases(
 }
 
 // NewAddress generates a new address for the lnd client.
-func (s *lightningClient) NewAddress(ctx context.Context, addressType lnrpc.AddressType) (
-	string, error) {
+func (s *lightningClient) NewAddress(
+	ctx context.Context,
+	addressType lnrpc.AddressType,
+) (
+	string, error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -4535,8 +4742,13 @@ func (s *lightningClient) NewAddress(ctx context.Context, addressType lnrpc.Addr
 }
 
 // SendMany handles a request for a transaction that creates multiple specified outputs in parallel.
-func (s *lightningClient) SendMany(ctx context.Context, txBatch map[string]int64, satPerVbyte uint64) (
-	string, error) {
+func (s *lightningClient) SendMany(
+	ctx context.Context,
+	txBatch map[string]int64,
+	satPerVbyte uint64,
+) (
+	string, error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -4560,8 +4772,12 @@ func (s *lightningClient) SendMany(ctx context.Context, txBatch map[string]int64
 
 // EstimateFees estimates the total fees for a batch of transactions that pay the given
 // amounts to the passed addresses.
-func (s *lightningClient) EstimateFees(ctx context.Context, txBatch map[string]int64) (
-	*lnrpc.EstimateFeeResponse, error) {
+func (s *lightningClient) EstimateFees(
+	ctx context.Context,
+	txBatch map[string]int64,
+) (
+	*lnrpc.EstimateFeeResponse, error,
+) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
