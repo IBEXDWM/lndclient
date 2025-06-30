@@ -293,24 +293,12 @@ type SendPaymentRequest struct {
 	// If set, circular payments to self are permitted.
 	AllowSelfPayment bool
 
-	// The time preference for this payment. Set to -1 to optimize for fees
-	// only, to 1 to optimize for reliability only or a value in-between for
-	// a mix.
+	// Payment secret
+	PaymentAddr []byte
+
+	// The time preference for this payment. Set to -1 to optimize for fees only, to 1 to optimize for reliability only
+	// or a value in between for a mix.
 	TimePref float64
-
-	// AMP is set to true if the payment should be an AMP payment.
-	AMP bool
-
-	// Cancelable controls if the payment can be interrupted manually by
-	// canceling the payment context, even before the payment timeout is
-	// reached. Note that the payment may still succeed after cancellation,
-	// as in-flight attempts can still settle afterward. Canceling will only
-	// prevent further attempts from being sent.
-	Cancelable bool
-
-	// FirstHopCustomRecords holds the custom TLV records should be sent to
-	// the first hop as part of the wire message.
-	FirstHopCustomRecords map[uint64][]byte
 }
 
 // InterceptedHtlc contains information about a htlc that was intercepted in
@@ -455,17 +443,16 @@ func (r *routerClient) SendPayment(ctx context.Context,
 
 	rpcCtx := r.routerKitMac.WithMacaroonAuth(ctx)
 	rpcReq := &routerrpc.SendPaymentRequest{
-		FeeLimitSat:           int64(request.MaxFee),
-		FeeLimitMsat:          int64(request.MaxFeeMsat),
-		PaymentRequest:        request.Invoice,
-		TimeoutSeconds:        int32(request.Timeout.Seconds()),
-		MaxParts:              request.MaxParts,
-		OutgoingChanIds:       request.OutgoingChanIds,
-		AllowSelfPayment:      request.AllowSelfPayment,
-		Amp:                   request.AMP,
-		TimePref:              request.TimePref,
-		Cancelable:            request.Cancelable,
-		FirstHopCustomRecords: request.FirstHopCustomRecords,
+		FeeLimitSat:      int64(request.MaxFee),
+		FeeLimitMsat:     int64(request.MaxFeeMsat),
+		PaymentRequest:   request.Invoice,
+		TimeoutSeconds:   int32(request.Timeout.Seconds()),
+		MaxParts:         request.MaxParts,
+		OutgoingChanIds:  request.OutgoingChanIds,
+		AllowSelfPayment: request.AllowSelfPayment,
+		PaymentAddr:      request.PaymentAddr,
+		Amt:              int64(request.Amount),
+		TimePref:         request.TimePref,
 	}
 	if request.MaxCltv != nil {
 		rpcReq.CltvLimit = *request.MaxCltv
