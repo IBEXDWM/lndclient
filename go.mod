@@ -6,10 +6,10 @@ require (
 	github.com/btcsuite/btcd/btcutil v1.1.5
 	github.com/btcsuite/btcd/btcutil/psbt v1.1.8
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
-	github.com/btcsuite/btclog/v2 v2.0.1-0.20250110154127-3ae4bf1cb318
-	github.com/btcsuite/btcwallet v0.16.13
+	github.com/btcsuite/btclog/v2 v2.0.1-0.20250602222548-9967d19bb084
+	github.com/btcsuite/btcwallet v0.16.14
 	github.com/btcsuite/btcwallet/wtxmgr v1.5.6
-	github.com/lightningnetwork/lnd v0.19.0-beta
+	github.com/lightningnetwork/lnd v0.19.1-beta.rc1
 	github.com/lightningnetwork/lnd/kvdb v1.4.16
 	github.com/stretchr/testify v1.10.0
 	google.golang.org/grpc v1.59.0
