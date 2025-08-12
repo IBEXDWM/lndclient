@@ -104,7 +104,9 @@ type LightningClient interface {
 
 	// EstimateFees estimates the total fees for a batch of transactions that pay the given
 	// amounts to the passed addresses.
-	EstimateFees(ctx context.Context, txBatch map[string]int64) (*lnrpc.EstimateFeeResponse, error)
+	EstimateFees(ctx context.Context, txBatch map[string]int64,
+		targetConf int32,
+	) (*lnrpc.EstimateFeeResponse, error)
 
 	// EstimateFeeToP2WSH estimates the total chain fees in satoshis to send
 	// the given amount to a single P2WSH output with the given target
@@ -4567,7 +4569,11 @@ func (s *lightningClient) SendMany(ctx context.Context, txBatch map[string]int64
 
 // EstimateFees estimates the total fees for a batch of transactions that pay the given
 // amounts to the passed addresses.
-func (s *lightningClient) EstimateFees(ctx context.Context, txBatch map[string]int64) (
+func (s *lightningClient) EstimateFees(
+	ctx context.Context,
+	txBatch map[string]int64,
+	targetConf int32,
+) (
 	*lnrpc.EstimateFeeResponse, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -4578,8 +4584,8 @@ func (s *lightningClient) EstimateFees(ctx context.Context, txBatch map[string]i
 		rpcCtx,
 		&lnrpc.EstimateFeeRequest{
 			AddrToAmount: txBatch,
-			TargetConf:   2, // confirm within x blocks
-			MinConfs:     1, // use utxos with a minimum conf of x blocks
+			TargetConf:   targetConf, // Target block
+			MinConfs:     1,          // use utxos with a minimum conf of x blocks
 		},
 	)
 	if err != nil {
