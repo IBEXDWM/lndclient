@@ -26,10 +26,10 @@ Increment the last digit for each new tag.
 
 ```
 # lndclient
-git tag ibex-v0.17.0-0
-git push origin ibex-v0.17.0-0
+git tag ibex-v0.18.3
+git push origin ibex-v0.18.3
 
 # target service
-replace ...lndclient... => ...lndclient ibex-v0.17.0-0
+replace ...lndclient... => ...lndclient ibex-v0.18.3
 go mod tidy -v
 ```
