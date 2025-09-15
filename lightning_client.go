@@ -778,15 +778,21 @@ type ForceCloseAnchorState int32
 const (
 	// ForceCloseAnchorStateLimbo is set if the recovered_balance is zero
 	// and limbo_balance is non-zero.
-	ForceCloseAnchorStateLimbo = ForceCloseAnchorState(lnrpc.PendingChannelsResponse_ForceClosedChannel_LIMBO)
+	ForceCloseAnchorStateLimbo = ForceCloseAnchorState(
+		lnrpc.PendingChannelsResponse_ForceClosedChannel_LIMBO,
+	)
 
 	// ForceCloseAnchorStateRecovered is set if the recovered_balance is
 	// non-zero.
-	ForceCloseAnchorStateRecovered = ForceCloseAnchorState(lnrpc.PendingChannelsResponse_ForceClosedChannel_RECOVERED)
+	ForceCloseAnchorStateRecovered = ForceCloseAnchorState(
+		lnrpc.PendingChannelsResponse_ForceClosedChannel_RECOVERED,
+	)
 
 	// ForceCloseAnchorStateLost indicates a state that is neither
 	// ForceCloseAnchorStateLimbo nor ForceCloseAnchorStateRecovered.
-	ForceCloseAnchorStateLost = ForceCloseAnchorState(lnrpc.PendingChannelsResponse_ForceClosedChannel_LOST)
+	ForceCloseAnchorStateLost = ForceCloseAnchorState(
+		lnrpc.PendingChannelsResponse_ForceClosedChannel_LOST,
+	)
 )
 
 // String provides the string representation of a close initiator.
@@ -2164,7 +2170,8 @@ type WaitingCloseChannel struct {
 	RemotePending chainhash.Hash
 
 	// ChanStatusFlags specifies the current channel state, examples:
-	//   - ChanStatusBorked|ChanStatusCommitBroadcasted|ChanStatusLocalCloseInitiator
+	//   - ChanStatusBorked|ChanStatusCommitBroadcasted|
+	//     ChanStatusLocalCloseInitiator
 	//   - ChanStatusCoopBroadcasted|ChanStatusLocalCloseInitiator
 	//   - ChanStatusCoopBroadcasted|ChanStatusRemoteCloseInitiator
 	ChanStatusFlags string
@@ -2174,8 +2181,8 @@ type WaitingCloseChannel struct {
 }
 
 // PendingChannels returns a list of lnd's pending channels.
-func (s *lightningClient) PendingChannels(ctx context.Context) (*PendingChannels,
-	error) {
+func (s *lightningClient) PendingChannels(
+	ctx context.Context) (*PendingChannels, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -2189,9 +2196,16 @@ func (s *lightningClient) PendingChannels(ctx context.Context) (*PendingChannels
 	}
 
 	pending := &PendingChannels{
-		PendingForceClose: make([]ForceCloseChannel, len(resp.PendingForceClosingChannels)),
-		PendingOpen:       make([]PendingChannel, len(resp.PendingOpenChannels)),
-		WaitingClose:      make([]WaitingCloseChannel, len(resp.WaitingCloseChannels)),
+		PendingForceClose: make(
+			[]ForceCloseChannel,
+			len(resp.PendingForceClosingChannels),
+		),
+		PendingOpen: make(
+			[]PendingChannel, len(resp.PendingOpenChannels),
+		),
+		WaitingClose: make(
+			[]WaitingCloseChannel, len(resp.WaitingCloseChannels),
+		),
 	}
 
 	for i, force := range resp.PendingForceClosingChannels {
@@ -3060,8 +3074,8 @@ func (s *lightningClient) getOpenStatusUpdate(
 // OpenChannelStream opens a channel to the specified peer and with the
 // specified arguments and options. This function returns a stream of
 // updates.
-func (s *lightningClient) OpenChannelStream(ctx context.Context, peer route.Vertex,
-	localSat, pushSat btcutil.Amount, private bool,
+func (s *lightningClient) OpenChannelStream(ctx context.Context,
+	peer route.Vertex, localSat, pushSat btcutil.Amount, private bool,
 	opts ...OpenChannelOption) (<-chan *OpenStatusUpdate, <-chan error,
 	error) {
 
@@ -3114,12 +3128,20 @@ func (s *lightningClient) OpenChannelStream(ctx context.Context, peer route.Vert
 type CloseChannelUpdate interface {
 	// CloseTxid returns the closing txid of the channel.
 	CloseTxid() chainhash.Hash
+
+	// NumberOfPendingHtlcs is the number of pending htlcs that we have
+	// present while a channel close with the NoWait option was in progress.
+	NumberOfPendingHtlcs() int32
 }
 
 // PendingCloseUpdate indicates that our closing transaction has been broadcast.
 type PendingCloseUpdate struct {
 	// CloseTx is the closing transaction id.
 	CloseTx chainhash.Hash
+
+	// NumPendingHtlcs is the number of pending htlcs that we have
+	// present while a channel close with the NoWait option was in progress.
+	NumPendingHtlcs int32
 }
 
 // CloseTxid returns the closing txid of the channel.
@@ -3127,15 +3149,31 @@ func (p *PendingCloseUpdate) CloseTxid() chainhash.Hash {
 	return p.CloseTx
 }
 
+// NumberOfPendingHtlcs returns the number of pending htlcs on a pending close
+// channel.
+func (p *PendingCloseUpdate) NumberOfPendingHtlcs() int32 {
+	return p.NumPendingHtlcs
+}
+
 // ChannelClosedUpdate indicates that our channel close has confirmed on chain.
 type ChannelClosedUpdate struct {
 	// CloseTx is the closing transaction id.
 	CloseTx chainhash.Hash
+
+	// NumPendingHtlcs is the number of pending htlcs that we have
+	// present while a channel close with the NoWait option was in progress.
+	NumPendingHtlcs int32
 }
 
 // CloseTxid returns the closing txid of the channel.
 func (p *ChannelClosedUpdate) CloseTxid() chainhash.Hash {
 	return p.CloseTx
+}
+
+// NumberOfPendingHtlcs returns the number of pending htlcs on a pending close
+// channel.
+func (p *ChannelClosedUpdate) NumberOfPendingHtlcs() int32 {
+	return p.NumPendingHtlcs
 }
 
 // CloseChannelOption is a functional type for an option that modifies a
@@ -3284,6 +3322,21 @@ func (s *lightningClient) CloseChannel(ctx context.Context,
 				}
 				sendUpdate(closeUpdate)
 
+			case *lnrpc.CloseStatusUpdate_CloseInstant:
+				instantUpdate := update.CloseInstant
+				if instantUpdate == nil {
+					sendErr(errors.New("instant update " +
+						"unavailable"))
+
+					return
+				}
+
+				numPendingHtlcs := instantUpdate.NumPendingHtlcs
+				closeUpdate := &PendingCloseUpdate{
+					NumPendingHtlcs: numPendingHtlcs,
+				}
+				sendUpdate(closeUpdate)
+
 			default:
 				sendErr(fmt.Errorf("unknown channel close "+
 					"update: %T", resp.Update))
@@ -3295,6 +3348,7 @@ func (s *lightningClient) CloseChannel(ctx context.Context,
 	return updateChan, errChan, nil
 }
 
+// InboundFee holds the inbound fee policy for a channel.
 type InboundFee struct {
 	// BaseFeeMsat is the inbound base fee charged regardless of the number
 	// of milli-satoshis received in the channel. By default, only negative
