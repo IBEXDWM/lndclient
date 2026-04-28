@@ -97,13 +97,16 @@ type LightningClient interface {
 		amt btcutil.Amount, confTarget int32) (btcutil.Amount, error)
 
 	// NewAddress generates a new address for the lnd client.
-	NewAddress(ctx context.Context, addressType lnrpc.AddressType) (string, error)
+	NewAddress(ctx context.Context, addressType lnrpc.AddressType) (
+		string, error)
 
-	// SendMany handles a request for a transaction that creates multiple specified outputs in parallel.
-	SendMany(ctx context.Context, txBatch map[string]int64, satPerVbyte uint64) (string, error)
+	// SendMany handles a request for a transaction that creates multiple
+	// specified outputs in parallel.
+	SendMany(ctx context.Context, txBatch map[string]int64,
+		satPerVbyte uint64) (string, error)
 
-	// EstimateFees estimates the total fees for a batch of transactions that pay the given
-	// amounts to the passed addresses.
+	// EstimateFees estimates the total fees for a batch of transactions
+	// that pay the given amounts to the passed addresses.
 	EstimateFees(ctx context.Context, txBatch map[string]int64,
 		targetConf int32,
 	) (*lnrpc.EstimateFeeResponse, error)
@@ -132,7 +135,8 @@ type LightningClient interface {
 		opts ...ListTransactionsOption) ([]Transaction, error)
 
 	// ListChannels retrieves all channels of the backing lnd node.
-	ListChannels(ctx context.Context, input *lnrpc.ListChannelsRequest) ([]ChannelInfo, error)
+	ListChannels(ctx context.Context,
+		input *lnrpc.ListChannelsRequest) ([]ChannelInfo, error)
 
 	// PendingChannels returns a list of lnd's pending channels.
 	PendingChannels(ctx context.Context) (*PendingChannels, error)
@@ -1290,8 +1294,9 @@ type QueryRoutesRequest struct {
 	// FeeLimitMsat is the fee limit to use in millisatoshis.
 	FeeLimitMsat lnwire.MilliSatoshi
 
-	// The time preference for this payment. Set to -1 to optimize for fees only, to 1 to optimize for reliability only
-	// or a value in between for a mix.
+	// The time preference for this payment. Set to -1 to optimize for
+	// fees only, to 1 to optimize for reliability only or a value in
+	// between for a mix.
 	TimePref float64
 }
 
@@ -4614,8 +4619,8 @@ func (s *lightningClient) SubscribeTransactions(
 }
 
 // NewAddress generates a new address for the lnd client.
-func (s *lightningClient) NewAddress(ctx context.Context, addressType lnrpc.AddressType) (
-	string, error) {
+func (s *lightningClient) NewAddress(ctx context.Context,
+	addressType lnrpc.AddressType) (string, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -4635,9 +4640,10 @@ func (s *lightningClient) NewAddress(ctx context.Context, addressType lnrpc.Addr
 	return resp.Address, nil
 }
 
-// SendMany handles a request for a transaction that creates multiple specified outputs in parallel.
-func (s *lightningClient) SendMany(ctx context.Context, txBatch map[string]int64, satPerVbyte uint64) (
-	string, error) {
+// SendMany handles a request for a transaction that creates multiple
+// specified outputs in parallel.
+func (s *lightningClient) SendMany(ctx context.Context,
+	txBatch map[string]int64, satPerVbyte uint64) (string, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -4659,8 +4665,8 @@ func (s *lightningClient) SendMany(ctx context.Context, txBatch map[string]int64
 	return resp.Txid, nil
 }
 
-// EstimateFees estimates the total fees for a batch of transactions that pay the given
-// amounts to the passed addresses.
+// EstimateFees estimates the total fees for a batch of transactions
+// that pay the given amounts to the passed addresses.
 func (s *lightningClient) EstimateFees(
 	ctx context.Context,
 	txBatch map[string]int64,
