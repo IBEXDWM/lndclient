@@ -18,6 +18,11 @@ node-metrics-agent:
 - PeerAlias support for ChannelInfo
 ```
 
+| tag          | `lnd` version in `go.mod` | minimum required `lnd` version | 
+|--------------|---------------------------|--------------------------------|
+| `v0.18.5-13` | `v0.18.5-beta`            | `v0.18.5-beta`                 |
+| `v0.20.0-4`  | `v0.20.0-beta`            | `v0.19.0-beta`                 |
+
 ## Building a new release
 
 Tag the commit and push the tag to remote. Then simply import the release in the target release.

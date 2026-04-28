@@ -15,7 +15,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/lightningnetwork/lnd/channeldb"
 	invpkg "github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -24,6 +23,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	"github.com/lightningnetwork/lnd/lnwire"
+	paymentsdb "github.com/lightningnetwork/lnd/payments/db"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/zpay32"
 	"google.golang.org/grpc"
@@ -220,12 +220,12 @@ type LightningClient interface {
 
 	// SendCoins sends the passed amount of (or all) coins to the passed
 	// address. Either amount or sendAll must be specified, while
-	// confTarget, satsPerByte are optional and may be set to zero in which
+	// confTarget, satsPerVByte are optional and may be set to zero in which
 	// case automatic conf target and fee will be used. Returns the tx id
 	// upon success.
 	SendCoins(ctx context.Context, addr btcutil.Address,
 		amount btcutil.Amount, sendAll bool, confTarget int32,
-		satsPerByte int64, label string) (string, error)
+		satsPerVByte chainfee.SatPerVByte, label string) (string, error)
 
 	// ChannelBalance returns a summary of our channel balances.
 	ChannelBalance(ctx context.Context) (*ChannelBalance, error)
@@ -473,6 +473,11 @@ type ChannelInfo struct {
 	// may be used for this channel. This array can be empty.
 	AliasScids []uint64
 
+	// CustomChannelData is an optional field that can be used to store
+	// data for custom channels.
+	CustomChannelData []byte
+
+	// PeerAlias is the alias of the peer node.
 	PeerAlias string
 }
 
@@ -515,9 +520,10 @@ func (s *lightningClient) newChannelInfo(channel *lnrpc.Channel) (*ChannelInfo,
 		RemoteConstraints: newChannelConstraint(
 			channel.RemoteConstraints,
 		),
-		ZeroConf:     channel.ZeroConf,
-		ZeroConfScid: channel.ZeroConfConfirmedScid,
-		PeerAlias:    channel.PeerAlias,
+		ZeroConf:          channel.ZeroConf,
+		ZeroConfScid:      channel.ZeroConfConfirmedScid,
+		CustomChannelData: channel.CustomChannelData,
+		PeerAlias:         channel.PeerAlias,
 	}
 
 	chanInfo.AliasScids = make([]uint64, len(channel.AliasScids))
@@ -1357,12 +1363,12 @@ var (
 	// PaymentResultAlreadyPaid is the string result returned by SendPayment
 	// when the payment was already completed in a previous SendPayment
 	// call.
-	PaymentResultAlreadyPaid = channeldb.ErrAlreadyPaid.Error()
+	PaymentResultAlreadyPaid = paymentsdb.ErrAlreadyPaid.Error()
 
 	// PaymentResultInFlight is the string result returned by SendPayment
 	// when the payment was initiated in a previous SendPayment call and
 	// still in flight.
-	PaymentResultInFlight = channeldb.ErrPaymentInFlight.Error()
+	PaymentResultInFlight = paymentsdb.ErrPaymentInFlight.Error()
 
 	paymentPollInterval = 3 * time.Second
 )
@@ -1674,20 +1680,52 @@ func (s *lightningClient) AddInvoice(ctx context.Context,
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
+	if in.Hash != nil || in.HodlInvoice {
+		log.Warnf("lightningClient.AddInvoice ignores " +
+			"Hash/HodlInvoice; use InvoicesClient.AddHoldInvoice " +
+			"for hold invoices")
+	}
+
+	routeHints, err := marshallRouteHints(in.RouteHints)
+	if err != nil {
+		return lntypes.Hash{}, "", fmt.Errorf(
+			"failed to marshal route hints: %v", err,
+		)
+	}
+
 	rpcIn := &lnrpc.Invoice{
 		Memo:            in.Memo,
 		ValueMsat:       int64(in.Value),
 		DescriptionHash: in.DescriptionHash,
 		Expiry:          in.Expiry,
+		FallbackAddr:    in.FallbackAddr,
 		CltvExpiry:      in.CltvExpiry,
 		Private:         in.Private,
+		IsAmp:           in.Amp,
+		RouteHints:      routeHints,
 	}
 
 	if in.Preimage != nil {
 		rpcIn.RPreimage = in.Preimage[:]
 	}
-	if in.Hash != nil {
-		rpcIn.RHash = in.Hash[:]
+	if in.BlindedPathCfg != nil {
+		rpcIn.IsBlinded = true
+
+		if in.BlindedPathCfg.MinNumPathHops != 0 {
+			numHops := uint32(in.BlindedPathCfg.MinNumPathHops)
+			rpcIn.BlindedPathConfig = &lnrpc.BlindedPathConfig{
+				NumHops: &numHops,
+			}
+		}
+
+		if in.BlindedPathCfg.RoutePolicyIncrMultiplier != 0 ||
+			in.BlindedPathCfg.RoutePolicyDecrMultiplier != 0 ||
+			in.BlindedPathCfg.DefaultDummyHopPolicy != nil {
+
+			log.Warnf("lightningClient.AddInvoice only forwards " +
+				"MinNumPathHops from BlindedPathCfg; other " +
+				"blinded path settings use lnd defaults")
+		}
 	}
 
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
@@ -3638,12 +3676,12 @@ func (s *lightningClient) Connect(ctx context.Context, peer route.Vertex,
 }
 
 // SendCoins sends the passed amount of (or all) coins to the passed address.
-// Either amount or sendAll must be specified, while confTarget, satsPerByte are
-// optional and may be set to zero in which case automatic conf target and fee
-// will be used. Returns the tx id upon success.
+// Either amount or sendAll must be specified, while confTarget, satsPerVByte
+// are optional and may be set to zero in which case automatic conf target and
+// fee will be used. Returns the tx id upon success.
 func (s *lightningClient) SendCoins(ctx context.Context, addr btcutil.Address,
 	amount btcutil.Amount, sendAll bool, confTarget int32,
-	satsPerByte int64, label string) (string, error) {
+	satsPerVByte chainfee.SatPerVByte, label string) (string, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -3651,12 +3689,12 @@ func (s *lightningClient) SendCoins(ctx context.Context, addr btcutil.Address,
 	rpcCtx = s.adminMac.WithMacaroonAuth(rpcCtx)
 
 	req := &lnrpc.SendCoinsRequest{
-		Addr:       addr.String(),
-		Amount:     int64(amount),
-		TargetConf: confTarget,
-		SatPerByte: satsPerByte,
-		SendAll:    sendAll,
-		Label:      label,
+		Addr:        addr.String(),
+		Amount:      int64(amount),
+		TargetConf:  confTarget,
+		SatPerVbyte: uint64(satsPerVByte),
+		SendAll:     sendAll,
+		Label:       label,
 	}
 
 	resp, err := s.client.SendCoins(rpcCtx, req)
