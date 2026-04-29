@@ -928,6 +928,14 @@
                 }
             ]
         },
+        "/routerrpc.Router/XFindBaseLocalChanAlias": {
+            "permissions": [
+                {
+                    "entity": "offchain",
+                    "action": "read"
+                }
+            ]
+        },
         "/signrpc.Signer/ComputeInputScript": {
             "permissions": [
                 {

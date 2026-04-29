@@ -2,7 +2,6 @@ package lndclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -89,10 +88,20 @@ type InvoicesClient interface {
 		handler InvoiceHtlcModifyHandler) error
 }
 
-// InvoiceUpdate contains a state update for an invoice.
+// InvoiceUpdate embeds an Invoice to expose the complete invoice view along
+// with the legacy satoshis-paid field used by existing callers.
 type InvoiceUpdate struct {
-	State       invpkg.ContractState
-	AmtPaid     btcutil.Amount
+	// Invoice holds the current state of the invoice.
+	Invoice
+
+	// AmtPaid is the amount that was accepted for this invoice, in sats.
+	// This will ONLY be set if this invoice has been settled or accepted.
+	// We provide this field as if the invoice was created with a zero
+	// value, then we need to record what amount was ultimately accepted.
+	// Additionally, it's possible that the sender paid MORE that was
+	// specified in the original invoice. So we'll record that here as well.
+	AmtPaid btcutil.Amount
+
 	AmtPaidMsat lnwire.MilliSatoshi
 }
 
@@ -204,18 +213,20 @@ func (s *invoicesClient) SubscribeSingleInvoice(ctx context.Context,
 				return
 			}
 
-			state, err := fromRPCInvoiceState(invoice.State)
+			clientInvoice, err := unmarshalInvoice(invoice)
 			if err != nil {
 				errChan <- err
 				return
 			}
 
-			select {
-			case updateChan <- InvoiceUpdate{
-				State:       state,
+			invoiceUpdate := InvoiceUpdate{
+				Invoice:     *clientInvoice,
 				AmtPaid:     btcutil.Amount(invoice.AmtPaidSat),
 				AmtPaidMsat: lnwire.MilliSatoshi(invoice.AmtPaidMsat),
-			}:
+			}
+
+			select {
+			case updateChan <- invoiceUpdate:
 			case <-ctx.Done():
 				return
 			}
@@ -230,6 +241,12 @@ func (s *invoicesClient) AddHoldInvoice(ctx context.Context,
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
+
+	if in.Amp || in.BlindedPathCfg != nil {
+		log.Warnf("invoicesClient.AddHoldInvoice ignores Amp/" +
+			"BlindedPathCfg; hold invoice RPC does not support " +
+			"those fields")
+	}
 
 	routeHints, err := marshallRouteHints(in.RouteHints)
 	if err != nil {
@@ -254,26 +271,6 @@ func (s *invoicesClient) AddHoldInvoice(ctx context.Context,
 		return "", err
 	}
 	return resp.PaymentRequest, nil
-}
-
-func fromRPCInvoiceState(state lnrpc.Invoice_InvoiceState) (
-	invpkg.ContractState, error) {
-
-	switch state {
-	case lnrpc.Invoice_OPEN:
-		return invpkg.ContractOpen, nil
-
-	case lnrpc.Invoice_ACCEPTED:
-		return invpkg.ContractAccepted, nil
-
-	case lnrpc.Invoice_SETTLED:
-		return invpkg.ContractSettled, nil
-
-	case lnrpc.Invoice_CANCELED:
-		return invpkg.ContractCanceled, nil
-	}
-
-	return 0, errors.New("unknown state")
 }
 
 // HtlcModifier is a bidirectional streaming RPC that allows a client to
