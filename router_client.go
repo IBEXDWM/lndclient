@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	invpkg "github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
@@ -47,6 +48,19 @@ type RouterClient interface {
 	// the routing cost of the given amount to the destination node.
 	EstimateRouteFee(ctx context.Context, dest route.Vertex,
 		amt btcutil.Amount) (lnwire.MilliSatoshi, error)
+
+	// EstimateRouteFeeWithProbe estimates routing costs by probing with an
+	// invoice. The timeout parameter bounds the probe inside lnd; a zero
+	// timeout lets lnd choose its default, currently 60 seconds. Do not rely
+	// on the context deadline or cancellation to bound the probe itself.
+	//
+	// A nil error does not imply that a route was found. Callers must check
+	// that the response FailureReason is FAILURE_REASON_NONE before trusting
+	// RoutingFee or TimeLockDelay. Zero-amount invoices are rejected by lnd
+	// and returned as an error. If a probe unexpectedly succeeds, lnd returns
+	// an RPC error instead of a response.
+	EstimateRouteFeeWithProbe(ctx context.Context, invoice string,
+		timeout time.Duration) (*EstimateRouteFeeWithProbeResponse, error)
 
 	// SubscribeHtlcEvents subscribes to a stream of htlc events from the
 	// router.
@@ -231,8 +245,9 @@ func NewHtlcFailure(rpcFailure *lnrpc.Failure) *HtlcFailure {
 // SendPaymentRequest defines the payment parameters for a new payment.
 type SendPaymentRequest struct {
 	// Invoice is an encoded payment request. The individual payment
-	// parameters Target, Amount, PaymentHash, FinalCLTVDelta and RouteHints
-	// are only processed when the Invoice field is empty.
+	// parameters Target, Amount, AmountMsat, PaymentHash, PaymentAddr,
+	// FinalCLTVDelta, RouteHints and DestFeatures are only processed when
+	// the Invoice field is empty.
 	Invoice string
 
 	// MaxFee is the fee limit for this payment.
@@ -258,12 +273,20 @@ type SendPaymentRequest struct {
 	Target route.Vertex
 
 	// Amount is the value of the payment to send through the network in
-	// satoshis.
+	// satoshis. Amount and AmountMsat are mutually exclusive.
 	Amount btcutil.Amount
+
+	// AmountMsat is the value of the payment to send through the network in
+	// millisatoshis. Amount and AmountMsat are mutually exclusive.
+	AmountMsat lnwire.MilliSatoshi
 
 	// PaymentHash is the r-hash value to use within the HTLC extended to
 	// the first hop.
 	PaymentHash *lntypes.Hash
+
+	// PaymentAddr is the payment address to use for the payment. If nil, no
+	// payment address is used.
+	PaymentAddr *[32]byte
 
 	// FinalCLTVDelta is the CTLV expiry delta to use for the _final_ hop
 	// in the route. This means that the final hop will have a CLTV delta
@@ -279,6 +302,10 @@ type SendPaymentRequest struct {
 	// together and sorted in forward order in order to reach the
 	// destination successfully.
 	RouteHints [][]zpay32.HopHint
+
+	// DestFeatures contains the feature bits advertised by the payment
+	// destination.
+	DestFeatures []lnrpc.FeatureBit
 
 	// LastHopPubkey is the pubkey of the last hop of the route taken
 	// for this payment. If empty, any hop may be used.
@@ -298,9 +325,6 @@ type SendPaymentRequest struct {
 	// If set, circular payments to self are permitted.
 	AllowSelfPayment bool
 
-	// Payment secret
-	PaymentAddr []byte
-
 	// The time preference for this payment. Set to -1 to optimize for fees
 	// only, to 1 to optimize for reliability only or a value in-between for
 	// a mix.
@@ -319,6 +343,23 @@ type SendPaymentRequest struct {
 	// FirstHopCustomRecords holds the custom TLV records should be sent to
 	// the first hop as part of the wire message.
 	FirstHopCustomRecords map[uint64][]byte
+}
+
+// EstimateRouteFeeWithProbeResponse is the response of a route fee estimate
+// probe.
+type EstimateRouteFeeWithProbeResponse struct {
+	// RoutingFee is a lower bound of the estimated fee to the target
+	// destination within the network.
+	RoutingFee lnwire.MilliSatoshi
+
+	// TimeLockDelay is an estimate of the worst-case time delay that can
+	// occur. Callers still need to factor in the final CLTV delta of the
+	// last hop into this value.
+	TimeLockDelay int64
+
+	// FailureReason indicates whether a probing payment succeeded or
+	// whether and why it failed. FAILURE_REASON_NONE indicates success.
+	FailureReason lnrpc.PaymentFailureReason
 }
 
 // InterceptedHtlc contains information about a htlc that was intercepted in
@@ -398,6 +439,19 @@ type InterceptedHtlcResponse struct {
 	// intercepted.
 	Action InterceptorAction
 
+	// FailureMessage is a pre-encrypted onion error to return when the
+	// action is fail. When set, lnd relays the bytes using
+	// IntermediateEncrypt, preserving the error attribution of the
+	// original encrypter.
+	FailureMessage []byte
+
+	// FailureCode is the failure code to return when the action is
+	// fail. When non-zero, lnd constructs an onion error attributed to
+	// the intercepting node using EncryptFirstHop. When zero and
+	// FailureMessage is also empty, lnd defaults to
+	// TemporaryChannelFailure.
+	FailureCode lnrpc.Failure_FailureCode
+
 	// IncomingAmount is the amount that should be used to validate the
 	// incoming htlc. This might be different from the actual HTLC amount
 	// for custom channels.
@@ -420,6 +474,11 @@ type routerClient struct {
 	quitOnce     sync.Once
 	quit         chan struct{}
 	wg           sync.WaitGroup
+}
+
+// paymentResultStream receives payment updates from a router payment RPC.
+type paymentResultStream interface {
+	Recv() (*lnrpc.Payment, error)
 }
 
 // A compile time check to ensure that routerClient implements the RouterClient
@@ -463,7 +522,6 @@ func (r *routerClient) SendPayment(ctx context.Context,
 
 	rpcCtx := r.routerKitMac.WithMacaroonAuth(ctx)
 	rpcReq := &routerrpc.SendPaymentRequest{
-
 		FeeLimitSat:           int64(request.MaxFee),
 		FeeLimitMsat:          int64(request.MaxFeeMsat),
 		PaymentRequest:        request.Invoice,
@@ -472,12 +530,16 @@ func (r *routerClient) SendPayment(ctx context.Context,
 		OutgoingChanIds:       request.OutgoingChanIds,
 		AllowSelfPayment:      request.AllowSelfPayment,
 		Amp:                   request.AMP,
-		PaymentAddr:           request.PaymentAddr,
 		Amt:                   int64(request.Amount),
 		TimePref:              request.TimePref,
 		Cancelable:            request.Cancelable,
 		FirstHopCustomRecords: request.FirstHopCustomRecords,
 	}
+	// IBEX: forward the payment address even when paying an invoice.
+	if request.PaymentAddr != nil {
+		rpcReq.PaymentAddr = request.PaymentAddr[:]
+	}
+
 	if request.MaxCltv != nil {
 		rpcReq.CltvLimit = *request.MaxCltv
 	}
@@ -514,8 +576,15 @@ func (r *routerClient) SendPayment(ctx context.Context,
 	if request.Invoice == "" {
 		rpcReq.Dest = request.Target[:]
 		rpcReq.Amt = int64(request.Amount)
-		rpcReq.PaymentHash = request.PaymentHash[:]
+		rpcReq.AmtMsat = int64(request.AmountMsat)
+		if request.PaymentHash != nil {
+			rpcReq.PaymentHash = request.PaymentHash[:]
+		}
+		if request.PaymentAddr != nil {
+			rpcReq.PaymentAddr = request.PaymentAddr[:]
+		}
 		rpcReq.FinalCltvDelta = int32(request.FinalCLTVDelta)
+		rpcReq.DestFeatures = request.DestFeatures
 
 		routeHints, err := marshallRouteHints(request.RouteHints)
 		if err != nil {
@@ -548,6 +617,121 @@ func (r *routerClient) TrackPayment(ctx context.Context,
 	}
 
 	return r.trackPayment(ctx, stream)
+}
+
+// payInvoice sends an invoice payment and returns its final result. This is a
+// compatibility helper for LightningClient.PayInvoice.
+func (r *routerClient) payInvoice(ctx context.Context, params *chaincfg.Params,
+	invoice string, maxFee btcutil.Amount,
+	outgoingChannel *uint64, customRecords map[uint64][]byte) *PaymentResult {
+
+	payReq, err := zpay32.Decode(invoice, params)
+	if err != nil {
+		return &PaymentResult{
+			Err: fmt.Errorf("invoice decode: %v", err),
+		}
+	}
+
+	if payReq.MilliSat == nil {
+		return &PaymentResult{
+			Err: errors.New("no amount in invoice"),
+		}
+	}
+
+	hash := lntypes.Hash(*payReq.PaymentHash)
+
+	ctx = r.routerKitMac.WithMacaroonAuth(ctx)
+	req := &routerrpc.SendPaymentRequest{
+		FeeLimitSat:       int64(maxFee),
+		PaymentRequest:    invoice,
+		DestCustomRecords: customRecords,
+	}
+
+	if outgoingChannel != nil {
+		req.OutgoingChanIds = []uint64{*outgoingChannel}
+	}
+
+	stream, err := r.client.SendPaymentV2(ctx, req)
+	if status.Code(err) == codes.Canceled {
+		return nil
+	}
+
+	if status.Code(err) == codes.AlreadyExists {
+		log.Infof("Payment %v already initiated(inflight) "+
+			"or completed(settled)", hash)
+
+		stream, err := r.client.TrackPaymentV2(
+			ctx, &routerrpc.TrackPaymentRequest{
+				PaymentHash: hash[:],
+			},
+		)
+		if status.Code(err) == codes.Canceled {
+			return nil
+		}
+		if err != nil {
+			return &PaymentResult{Err: err}
+		}
+
+		return r.paymentResultFromStream(hash, stream)
+	}
+
+	if err != nil {
+		return &PaymentResult{Err: err}
+	}
+
+	return r.paymentResultFromStream(hash, stream)
+}
+
+// paymentResultFromStream consumes a router payment update stream until a final
+// payment result is received.
+func (r *routerClient) paymentResultFromStream(hash lntypes.Hash,
+	stream paymentResultStream) *PaymentResult {
+
+	for {
+		payResp, err := stream.Recv()
+		if status.Code(err) == codes.Canceled {
+			return nil
+		}
+
+		if err == io.EOF {
+			return &PaymentResult{
+				Err: errors.New("payment stream closed"),
+			}
+		}
+
+		if err != nil {
+			return &PaymentResult{Err: err}
+		}
+
+		status, err := unmarshallPaymentStatus(payResp)
+		if err != nil {
+			return &PaymentResult{Err: err}
+		}
+
+		switch status.State {
+		case lnrpc.Payment_SUCCEEDED:
+			log.Infof("Payment %v completed", hash)
+
+			return &PaymentResult{
+				PaidFee:  status.Fee.ToSatoshis(),
+				PaidAmt:  status.Value.ToSatoshis(),
+				Preimage: status.Preimage,
+			}
+
+		case lnrpc.Payment_FAILED:
+			log.Warnf(
+				"Payment %v failed: %v", hash,
+				status.FailureReason,
+			)
+
+			return &PaymentResult{
+				Err: errors.New(status.FailureReason.String()),
+			}
+
+		case lnrpc.Payment_IN_FLIGHT:
+			log.Infof("Payment %v still in flight", hash)
+		}
+	}
 }
 
 // trackPayment takes an update stream from either a SendPayment or a
@@ -613,18 +797,66 @@ func (r *routerClient) trackPayment(ctx context.Context,
 func (r *routerClient) EstimateRouteFee(ctx context.Context, dest route.Vertex,
 	amt btcutil.Amount) (lnwire.MilliSatoshi, error) {
 
-	rpcCtx := r.routerKitMac.WithMacaroonAuth(ctx)
-	rpcReq := &routerrpc.RouteFeeRequest{
+	res, err := r.estimateRouteFee(ctx, &routerrpc.RouteFeeRequest{
 		Dest:   dest[:],
 		AmtSat: int64(amt),
-	}
-
-	rpcRes, err := r.client.EstimateRouteFee(rpcCtx, rpcReq)
+	})
 	if err != nil {
 		return 0, err
 	}
 
-	return lnwire.MilliSatoshi(rpcRes.RoutingFeeMsat), nil
+	return res.RoutingFee, nil
+}
+
+// EstimateRouteFeeWithProbe estimates routing costs by probing with an invoice.
+// The timeout parameter bounds the probe inside lnd; a zero timeout lets lnd
+// choose its default, currently 60 seconds. Do not rely on the context deadline
+// or cancellation to bound the probe itself.
+//
+// A nil error does not imply that a route was found. Callers must check that
+// the response FailureReason is FAILURE_REASON_NONE before trusting RoutingFee
+// or TimeLockDelay. Zero-amount invoices are rejected by lnd and returned as an
+// error. If a probe unexpectedly succeeds, lnd returns an RPC error instead of
+// a response.
+func (r *routerClient) EstimateRouteFeeWithProbe(ctx context.Context,
+	invoice string, timeout time.Duration) (*EstimateRouteFeeWithProbeResponse,
+	error) {
+
+	if timeout < 0 {
+		return nil, fmt.Errorf("timeout must not be negative")
+	}
+
+	rpcReq := &routerrpc.RouteFeeRequest{
+		PaymentRequest: invoice,
+	}
+	if timeout > 0 {
+		const maxTimeout = time.Duration(^uint32(0)) * time.Second
+		if timeout > maxTimeout {
+			return nil, fmt.Errorf("timeout exceeds maximum of %v",
+				maxTimeout)
+		}
+
+		rpcReq.Timeout = uint32((timeout + time.Second - 1) / time.Second)
+	}
+
+	return r.estimateRouteFee(ctx, rpcReq)
+}
+
+func (r *routerClient) estimateRouteFee(ctx context.Context,
+	rpcReq *routerrpc.RouteFeeRequest) (*EstimateRouteFeeWithProbeResponse,
+	error) {
+
+	rpcCtx := r.routerKitMac.WithMacaroonAuth(ctx)
+	rpcRes, err := r.client.EstimateRouteFee(rpcCtx, rpcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &EstimateRouteFeeWithProbeResponse{
+		RoutingFee:    lnwire.MilliSatoshi(rpcRes.RoutingFeeMsat),
+		TimeLockDelay: rpcRes.TimeLockDelay,
+		FailureReason: rpcRes.FailureReason,
+	}, nil
 }
 
 // unmarshallPaymentStatus converts an rpc status update to the PaymentStatus
@@ -960,6 +1192,22 @@ func rpcInterceptorResponse(request InterceptedHtlc,
 
 	case InterceptorActionFail:
 		rpcResp.Action = routerrpc.ResolveHoldForwardAction_FAIL
+
+		if len(response.FailureMessage) > 0 &&
+			response.FailureCode != 0 {
+
+			return nil, errors.New(
+				"failure_message and failure_code are " +
+					"mutually exclusive",
+			)
+		}
+
+		if len(response.FailureMessage) > 0 {
+			rpcResp.FailureMessage = response.FailureMessage
+		}
+		if response.FailureCode != 0 {
+			rpcResp.FailureCode = response.FailureCode
+		}
 
 	case InterceptorActionResume:
 		rpcResp.Action = routerrpc.ResolveHoldForwardAction_RESUME

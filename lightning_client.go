@@ -11,10 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	invpkg "github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -27,8 +28,6 @@ import (
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/zpay32"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // OpenChannelOption is a functional type for an option that modifies an
@@ -93,7 +92,7 @@ type LightningClient interface {
 
 	// EstimateFee estimates the total fees for a transaction that pays the
 	// given amount to the passed address.
-	EstimateFee(ctx context.Context, address btcutil.Address,
+	EstimateFee(ctx context.Context, address btcaddr.Address,
 		amt btcutil.Amount, confTarget int32) (btcutil.Amount, error)
 
 	// NewAddress generates a new address for the lnd client.
@@ -198,7 +197,7 @@ type LightningClient interface {
 
 	// CloseChannel closes the channel provided.
 	CloseChannel(ctx context.Context, channel *wire.OutPoint,
-		force bool, confTarget int32, deliveryAddr btcutil.Address,
+		force bool, confTarget int32, deliveryAddr btcaddr.Address,
 		opts ...CloseChannelOption) (chan CloseChannelUpdate,
 		chan error, error)
 
@@ -227,7 +226,7 @@ type LightningClient interface {
 	// confTarget, satsPerVByte are optional and may be set to zero in which
 	// case automatic conf target and fee will be used. Returns the tx id
 	// upon success.
-	SendCoins(ctx context.Context, addr btcutil.Address,
+	SendCoins(ctx context.Context, addr btcaddr.Address,
 		amount btcutil.Amount, sendAll bool, confTarget int32,
 		satsPerVByte chainfee.SatPerVByte, label string) (string, error)
 
@@ -465,7 +464,7 @@ type ChannelInfo struct {
 
 	// CloseAddr is the optional upfront shutdown address set for a
 	// channel.
-	CloseAddr btcutil.Address
+	CloseAddr btcaddr.Address
 
 	// ZeroConf indicates whether the channel is a zero conf channel or not.
 	ZeroConf bool
@@ -544,7 +543,7 @@ func (s *lightningClient) newChannelInfo(channel *lnrpc.Channel) (*ChannelInfo,
 	}
 
 	if channel.CloseAddress != "" {
-		chanInfo.CloseAddr, err = btcutil.DecodeAddress(
+		chanInfo.CloseAddr, err = btcaddr.DecodeAddress(
 			channel.CloseAddress, s.params,
 		)
 		if err != nil {
@@ -624,6 +623,9 @@ const (
 	// FullyResolvedChannelUpdate indicates that the channel event holds
 	// information about a channel has been fully closed.
 	FullyResolvedChannelUpdate
+
+	// StateChannelUpdate indicates that the channel state has been updated.
+	StateChannelUpdate
 )
 
 // OpenStatusUpdate is a wrapper for channel status updates following a channel
@@ -664,6 +666,9 @@ type ChannelEventUpdate struct {
 
 	// ClosedChannelInfo holds the channel info for a newly closed channel.
 	ClosedChannelInfo *ClosedChannel
+
+	// UpdatedChannelInfo holds the channel info for channel state updates.
+	UpdatedChannelInfo *ChannelInfo
 }
 
 // ClosedChannel represents a channel that has been closed.
@@ -1191,6 +1196,10 @@ func newAcceptorRequest(req *lnrpc.ChannelAcceptRequest) (*AcceptorRequest,
 		commitmentType = new(lnwallet.CommitmentType)
 		*commitmentType = lnwallet.CommitmentTypeSimpleTaproot
 
+	case lnrpc.CommitmentType_SIMPLE_TAPROOT_FINAL:
+		commitmentType = new(lnwallet.CommitmentType)
+		*commitmentType = lnwallet.CommitmentTypeSimpleTaprootFinal
+
 	case lnrpc.CommitmentType_SIMPLE_TAPROOT_OVERLAY:
 		commitmentType = new(lnwallet.CommitmentType)
 		*commitmentType = lnwallet.CommitmentTypeSimpleTaprootOverlay
@@ -1374,12 +1383,11 @@ var (
 	// when the payment was initiated in a previous SendPayment call and
 	// still in flight.
 	PaymentResultInFlight = paymentsdb.ErrPaymentInFlight.Error()
-
-	paymentPollInterval = 3 * time.Second
 )
 
 type lightningClient struct {
 	client   lnrpc.LightningClient
+	router   *routerClient
 	wg       sync.WaitGroup
 	params   *chaincfg.Params
 	timeout  time.Duration
@@ -1391,10 +1399,12 @@ type lightningClient struct {
 var _ LightningClient = (*lightningClient)(nil)
 
 func newLightningClient(conn grpc.ClientConnInterface, timeout time.Duration,
-	params *chaincfg.Params, adminMac serializedMacaroon) *lightningClient {
+	params *chaincfg.Params, adminMac serializedMacaroon,
+	router *routerClient) *lightningClient {
 
 	return &lightningClient{
 		client:   lnrpc.NewLightningClient(conn),
+		router:   router,
 		params:   params,
 		timeout:  timeout,
 		adminMac: adminMac,
@@ -1497,7 +1507,7 @@ func newInfo(resp *lnrpc.GetInfoResponse) (*Info, error) {
 // EstimateFee estimates the total fees for a transaction that pays the given
 // amount to the passed address.
 func (s *lightningClient) EstimateFee(ctx context.Context,
-	address btcutil.Address, amt btcutil.Amount, confTarget int32) (
+	address btcaddr.Address, amt btcutil.Amount, confTarget int32) (
 	btcutil.Amount, error) {
 
 	rpcCtx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -1526,7 +1536,7 @@ func (s *lightningClient) EstimateFeeToP2WSH(ctx context.Context,
 
 	// Generate a dummy p2wsh address for fee estimation.
 	wsh := [32]byte{}
-	p2wshAddress, err := btcutil.NewAddressWitnessScriptHash(
+	p2wshAddress, err := btcaddr.NewAddressWitnessScriptHash(
 		wsh[:], s.params,
 	)
 	if err != nil {
@@ -1543,8 +1553,8 @@ func (s *lightningClient) PayInvoice(ctx context.Context, invoice string,
 	// Use buffer to prevent blocking.
 	paymentChan := make(chan PaymentResult, 1)
 
-	// Execute payment in parallel, because it will block until server
-	// discovers preimage.
+	// Execute payment in parallel, because it will block until the
+	// payment stream reaches a final state.
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -1558,125 +1568,13 @@ func (s *lightningClient) PayInvoice(ctx context.Context, invoice string,
 	return paymentChan
 }
 
-// payInvoice tries to send a payment and returns the final result. If
-// necessary, it will poll lnd for the payment result.
+// payInvoice tries to send a payment and returns the final result.
 func (s *lightningClient) payInvoice(ctx context.Context, invoice string,
 	maxFee btcutil.Amount, outgoingChannel *uint64) *PaymentResult {
 
-	payReq, err := zpay32.Decode(invoice, s.params)
-	if err != nil {
-		return &PaymentResult{
-			Err: fmt.Errorf("invoice decode: %v", err),
-		}
-	}
-
-	if payReq.MilliSat == nil {
-		return &PaymentResult{
-			Err: errors.New("no amount in invoice"),
-		}
-	}
-
-	hash := lntypes.Hash(*payReq.PaymentHash)
-
-	ctx = s.adminMac.WithMacaroonAuth(ctx)
-	for {
-		// Create no timeout context as this call can block for a long
-		// time.
-
-		req := &lnrpc.SendRequest{
-			FeeLimit: &lnrpc.FeeLimit{
-				Limit: &lnrpc.FeeLimit_Fixed{
-					Fixed: int64(maxFee),
-				},
-			},
-			PaymentRequest: invoice,
-		}
-
-		if outgoingChannel != nil {
-			req.OutgoingChanId = *outgoingChannel
-		}
-
-		payResp, err := s.client.SendPaymentSync(ctx, req)
-
-		if status.Code(err) == codes.Canceled {
-			return nil
-		}
-
-		if err == nil {
-			// TODO: Use structured payment error when available,
-			// instead of this brittle string matching.
-			switch payResp.PaymentError {
-			// Paid successfully.
-			case PaymentResultSuccess:
-				log.Infof(
-					"Payment %v completed", hash,
-				)
-
-				r := payResp.PaymentRoute
-
-				var (
-					preimage lntypes.Preimage
-					err      error
-				)
-
-				if payResp.PaymentPreimage != nil {
-					preimage, err = lntypes.MakePreimage(
-						payResp.PaymentPreimage,
-					)
-					if err != nil {
-						return &PaymentResult{Err: err}
-					}
-				}
-
-				return &PaymentResult{
-					PaidFee: btcutil.Amount(r.TotalFees), // nolint:staticcheck
-					PaidAmt: btcutil.Amount(
-						r.TotalAmt - r.TotalFees, // nolint:staticcheck
-					),
-					Preimage: preimage,
-				}
-
-			// Invoice was already paid on a previous run.
-			case PaymentResultAlreadyPaid:
-				log.Infof(
-					"Payment %v already completed", hash,
-				)
-
-				// Unfortunately lnd doesn't return the route if
-				// the payment was successful in a previous
-				// call. Assume paid fees 0 and take paid amount
-				// from invoice.
-
-				return &PaymentResult{
-					PaidFee: 0,
-					PaidAmt: payReq.MilliSat.ToSatoshis(),
-				}
-
-			// If the payment is already in flight, we will poll
-			// again later for an outcome.
-			//
-			// TODO: Improve this when lnd expose more API to
-			// tracking existing payments.
-			case PaymentResultInFlight:
-				log.Infof(
-					"Payment %v already in flight", hash,
-				)
-
-				time.Sleep(paymentPollInterval)
-
-			// Other errors are transformed into an error struct.
-			default:
-				log.Warnf(
-					"Payment %v failed: %v", hash,
-					payResp.PaymentError,
-				)
-
-				return &PaymentResult{
-					Err: errors.New(payResp.PaymentError),
-				}
-			}
-		}
-	}
+	return s.router.payInvoice(
+		ctx, s.params, invoice, maxFee, outgoingChannel, nil,
+	)
 }
 
 func (s *lightningClient) AddInvoice(ctx context.Context,
@@ -2666,6 +2564,23 @@ type ListPaymentsRequest struct {
 
 	// IncludeIncomplete is set if we want to include incomplete payments.
 	IncludeIncomplete bool
+
+	// CountTotalPayments is set if we want LND to count all payments
+	// independent of the max payments parameter. This can significantly
+	// increase runtime on nodes with many payments.
+	CountTotalPayments bool
+
+	// CreationDateStart returns all payments with a creation date greater
+	// than or equal to it. Measured in seconds since the unix epoch.
+	CreationDateStart uint64
+
+	// CreationDateEnd returns all payments with a creation date less than or
+	// equal to it. Measured in seconds since the unix epoch.
+	CreationDateEnd uint64
+
+	// OmitHops is set if we want to omit hop-level route data for HTLC
+	// attempts to reduce query cost and response size.
+	OmitHops bool
 }
 
 // ListPaymentsResponse contains the response to a list payments query,
@@ -2679,6 +2594,11 @@ type ListPaymentsResponse struct {
 
 	// Payments is the set of invoices that were returned.
 	Payments []Payment
+
+	// TotalNumPayments is the total number of payments in the payments
+	// database. This is only set when CountTotalPayments is set in the
+	// request.
+	TotalNumPayments uint64
 }
 
 // ListPayments makes a paginated call to our listpayments endpoint.
@@ -2691,10 +2611,14 @@ func (s *lightningClient) ListPayments(ctx context.Context,
 	resp, err := s.client.ListPayments(
 		s.adminMac.WithMacaroonAuth(rpcCtx),
 		&lnrpc.ListPaymentsRequest{
-			IncludeIncomplete: req.IncludeIncomplete,
-			IndexOffset:       req.Offset,
-			MaxPayments:       req.MaxPayments,
-			Reversed:          req.Reversed,
+			IncludeIncomplete:  req.IncludeIncomplete,
+			IndexOffset:        req.Offset,
+			MaxPayments:        req.MaxPayments,
+			Reversed:           req.Reversed,
+			CountTotalPayments: req.CountTotalPayments,
+			CreationDateStart:  req.CreationDateStart,
+			CreationDateEnd:    req.CreationDateEnd,
+			OmitHops:           req.OmitHops,
 		})
 	if err != nil {
 		return nil, err
@@ -2745,6 +2669,7 @@ func (s *lightningClient) ListPayments(ctx context.Context,
 		FirstIndexOffset: resp.FirstIndexOffset,
 		LastIndexOffset:  resp.LastIndexOffset,
 		Payments:         payments,
+		TotalNumPayments: resp.TotalNumPayments,
 	}, nil
 }
 
@@ -2880,6 +2805,17 @@ func (s *lightningClient) getChannelEventUpdate(
 			return nil, err
 		}
 
+	case lnrpc.ChannelEventUpdate_CHANNEL_UPDATE:
+		result.UpdateType = StateChannelUpdate
+		channel := rpcChannelEventUpdate.GetUpdatedChannel()
+
+		result.UpdatedChannelInfo, err = s.newChannelInfo(
+			channel.Channel,
+		)
+		if err != nil {
+			return nil, err
+		}
+
 	default:
 		return nil, fmt.Errorf("unhandled update type: %v",
 			rpcChannelEventUpdate.Type.String())
@@ -2986,8 +2922,8 @@ type PaymentRequest struct {
 	// Timestamp of the payment request.
 	Timestamp time.Time
 
-	// Expiry is the time at which the payment request expires.
-	Expiry time.Time
+	// ExpiresAt is the time at which the payment request expires.
+	ExpiresAt time.Time
 
 	// Description is a description attached to the payment request.
 	Description string
@@ -3039,7 +2975,11 @@ func (s *lightningClient) DecodePaymentRequest(ctx context.Context,
 	}
 
 	if resp.Expiry != 0 {
-		paymentReq.Expiry = time.Unix(resp.Expiry, 0)
+		// LND reports expiry as a duration from the invoice timestamp.
+		invoiceTimestamp := time.Unix(resp.Timestamp, 0)
+		paymentReq.ExpiresAt = invoiceTimestamp.Add(
+			time.Duration(resp.Expiry) * time.Second,
+		)
 	}
 
 	return paymentReq, nil
@@ -3257,7 +3197,7 @@ func WithNoWait() CloseChannelOption {
 // that *does not* have an upfront shutdown address set.
 func (s *lightningClient) CloseChannel(ctx context.Context,
 	channel *wire.OutPoint, force bool, confTarget int32,
-	deliveryAddr btcutil.Address, opts ...CloseChannelOption) (
+	deliveryAddr btcaddr.Address, opts ...CloseChannelOption) (
 	chan CloseChannelUpdate, chan error, error) {
 
 	var (
@@ -3684,7 +3624,7 @@ func (s *lightningClient) Connect(ctx context.Context, peer route.Vertex,
 // Either amount or sendAll must be specified, while confTarget, satsPerVByte
 // are optional and may be set to zero in which case automatic conf target and
 // fee will be used. Returns the tx id upon success.
-func (s *lightningClient) SendCoins(ctx context.Context, addr btcutil.Address,
+func (s *lightningClient) SendCoins(ctx context.Context, addr btcaddr.Address,
 	amount btcutil.Amount, sendAll bool, confTarget int32,
 	satsPerVByte chainfee.SatPerVByte, label string) (string, error) {
 
