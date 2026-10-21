@@ -1555,15 +1555,12 @@ func (s *lightningClient) PayInvoice(ctx context.Context, invoice string,
 
 	// Execute payment in parallel, because it will block until the
 	// payment stream reaches a final state.
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		result := s.payInvoice(ctx, invoice, maxFee, outgoingChannel)
 		if result != nil {
 			paymentChan <- *result
 		}
-	}()
+	})
 
 	return paymentChan
 }
@@ -2841,10 +2838,7 @@ func (s *lightningClient) SubscribeChannelEvents(ctx context.Context) (
 	updates := make(chan *ChannelEventUpdate)
 	errChan := make(chan error, 1)
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			rpcUpdate, err := updateStream.Recv()
 			if err != nil {
@@ -2864,7 +2858,7 @@ func (s *lightningClient) SubscribeChannelEvents(ctx context.Context) (
 				return
 			}
 		}
-	}()
+	})
 
 	return updates, errChan, nil
 }
@@ -2887,9 +2881,7 @@ func (s *lightningClient) SubscribeChannelBackups(ctx context.Context) (
 	streamErr := make(chan error, 1)
 
 	// Backups updates goroutine.
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		for {
 			snapshot, err := backupStream.Recv()
 			if err != nil {
@@ -2903,7 +2895,7 @@ func (s *lightningClient) SubscribeChannelBackups(ctx context.Context) (
 				return
 			}
 		}
-	}()
+	})
 
 	return backupUpdates, streamErr, nil
 }
@@ -3083,10 +3075,7 @@ func (s *lightningClient) OpenChannelStream(ctx context.Context,
 	updates := make(chan *OpenStatusUpdate)
 	errChan := make(chan error, 1)
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			rpcUpdate, err := updateStream.Recv()
 			if err != nil {
@@ -3102,7 +3091,7 @@ func (s *lightningClient) OpenChannelStream(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return updates, errChan, nil
 }
@@ -3253,10 +3242,7 @@ func (s *lightningClient) CloseChannel(ctx context.Context,
 
 	// Send updates into our channels from the stream. We will exit if the
 	// server finishes sending updates, or if our context is cancelled.
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			// Wait to receive an update from lnd. If we receive
 			// an EOF from the server, it has finished providing
@@ -3326,7 +3312,7 @@ func (s *lightningClient) CloseChannel(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return updateChan, errChan, nil
 }
@@ -3773,10 +3759,7 @@ func (s *lightningClient) SubscribeGraph(ctx context.Context) (
 	updates := make(chan *GraphTopologyUpdate)
 	errChan := make(chan error, 1)
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			rpcUpdate, err := updateStream.Recv()
 			if err != nil {
@@ -3796,7 +3779,7 @@ func (s *lightningClient) SubscribeGraph(ctx context.Context) (
 				return
 			}
 		}
-	}()
+	})
 
 	return updates, errChan, nil
 }
@@ -3969,9 +3952,7 @@ func (s *lightningClient) SubscribeInvoices(ctx context.Context,
 	streamErr := make(chan error, 1)
 
 	// New invoices updates goroutine.
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		defer close(streamErr)
 		defer close(invoiceUpdates)
 
@@ -3993,7 +3974,7 @@ func (s *lightningClient) SubscribeInvoices(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return invoiceUpdates, streamErr, nil
 }
@@ -4065,10 +4046,7 @@ func (s *lightningClient) ChannelAcceptor(ctx context.Context,
 
 	errChan := make(chan error, 1)
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -4128,7 +4106,7 @@ func (s *lightningClient) ChannelAcceptor(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return errChan, nil
 }
@@ -4336,10 +4314,7 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 		}
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -4377,7 +4352,7 @@ func (s *lightningClient) RegisterRPCMiddleware(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return errChan, nil
 }

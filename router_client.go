@@ -1041,10 +1041,7 @@ func (r *routerClient) InterceptHtlcs(ctx context.Context,
 	// until this function exits, at which point we expect our context to
 	// be canceled or quit channel to be closed.
 	requestChan := make(chan InterceptedHtlc)
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
-
+	r.wg.Go(func() {
 		for {
 			// Do a quick check whether our client context has been
 			// canceled so that we can exit sooner if needed.
@@ -1117,7 +1114,7 @@ func (r *routerClient) InterceptHtlcs(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	for {
 		select {
@@ -1126,10 +1123,7 @@ func (r *routerClient) InterceptHtlcs(ctx context.Context,
 			// provided to this function can be blocking. If we
 			// get an error, send it into our error channel to
 			// shutdown the interceptor.
-			r.wg.Add(1)
-			go func() {
-				defer r.wg.Done()
-
+			r.wg.Go(func() {
 				// Get a response from handler, this may block
 				// for a while.
 				resp, err := handler(ctx, request)
@@ -1150,7 +1144,7 @@ func (r *routerClient) InterceptHtlcs(ctx context.Context,
 					sendErr(err)
 					return
 				}
-			}()
+			})
 
 		// If one of our goroutines fails, exit with the error that
 		// occurred.

@@ -192,9 +192,7 @@ func (s *invoicesClient) SubscribeSingleInvoice(ctx context.Context,
 	errChan := make(chan error, 1)
 
 	// Invoice updates goroutine.
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		for {
 			invoice, err := invoiceStream.Recv()
 			if err != nil {
@@ -231,7 +229,7 @@ func (s *invoicesClient) SubscribeSingleInvoice(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return updateChan, errChan, nil
 }
@@ -315,10 +313,7 @@ func (s *invoicesClient) HtlcModifier(ctx context.Context,
 	// until this function exits, at which point we expect our context to
 	// be canceled or quit channel to be closed.
 	requestChan := make(chan InvoiceHtlcModifyRequest)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			// Do a quick check whether our client context has been
 			// canceled so that we can exit sooner if needed.
@@ -363,7 +358,7 @@ func (s *invoicesClient) HtlcModifier(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	for {
 		select {
@@ -372,10 +367,7 @@ func (s *invoicesClient) HtlcModifier(ctx context.Context,
 			// provided to this function can be blocking. If we
 			// get an error, send it into our error channel to
 			// shut down the interceptor.
-			s.wg.Add(1)
-			go func() {
-				defer s.wg.Done()
-
+			s.wg.Go(func() {
 				// Get a response from handler, this may block
 				// for a while.
 				resp, err := handler(ctx, request)
@@ -399,7 +391,7 @@ func (s *invoicesClient) HtlcModifier(ctx context.Context,
 					sendErr(err)
 					return
 				}
-			}()
+			})
 
 		// If one of our goroutines fails, exit with the error that
 		// occurred.

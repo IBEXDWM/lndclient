@@ -320,10 +320,8 @@ func (m *walletKitClient) ListUnspent(ctx context.Context, minConfs,
 			Value:         btcutil.Amount(utxo.AmountSat),
 			Confirmations: utxo.Confirmations,
 			PkScript:      pkScript,
-			OutPoint: wire.OutPoint{
-				Hash:  *opHash,
-				Index: utxo.Outpoint.OutputIndex,
-			},
+			Hash:          *opHash,
+			Index:         utxo.Outpoint.OutputIndex,
 		})
 	}
 
@@ -443,10 +441,8 @@ func (m *walletKitClient) DeriveNextKey(ctx context.Context, family int32) (
 	}
 
 	return &keychain.KeyDescriptor{
-		KeyLocator: keychain.KeyLocator{
-			Family: keychain.KeyFamily(resp.KeyLoc.KeyFamily),
-			Index:  uint32(resp.KeyLoc.KeyIndex),
-		},
+		Family: keychain.KeyFamily(resp.KeyLoc.KeyFamily),
+		Index:  uint32(resp.KeyLoc.KeyIndex),
 		PubKey: key,
 	}, nil
 }
