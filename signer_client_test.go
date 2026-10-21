@@ -91,10 +91,8 @@ func TestMarshallSignDescriptorsFullLocator(t *testing.T) {
 			t.Parallel()
 
 			keyDesc := keychain.KeyDescriptor{
-				KeyLocator: keychain.KeyLocator{
-					Family: tc.family,
-					Index:  tc.index,
-				},
+				Family: tc.family,
+				Index:  tc.index,
 			}
 			if !tc.omitPubKey {
 				keyDesc.PubKey = pubKey

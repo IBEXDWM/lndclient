@@ -425,25 +425,23 @@ func NewLndServices(cfg *LndServicesConfig) (*GrpcLndServices, error) {
 	}
 
 	services := &GrpcLndServices{
-		LndServices: LndServices{
-			Client:        lightningClient,
-			WalletKit:     walletKitClient,
-			ChainNotifier: notifierClient,
-			ChainKit:      chainKitClient,
-			Signer:        signerClient,
-			Invoices:      invoicesClient,
-			Router:        routerClient,
-			Versioner:     versionerClient,
-			State:         stateClient,
-			WtClient:      wtClient,
-			ChainParams:   chainParams,
-			NodeAlias:     nodeAlias,
-			NodePubkey:    route.Vertex(nodeKey),
-			Version:       version,
-			ClientConn:    conn,
-			macaroons:     macaroons,
-		},
-		cleanup: cleanup,
+		Client:        lightningClient,
+		WalletKit:     walletKitClient,
+		ChainNotifier: notifierClient,
+		ChainKit:      chainKitClient,
+		Signer:        signerClient,
+		Invoices:      invoicesClient,
+		Router:        routerClient,
+		Versioner:     versionerClient,
+		State:         stateClient,
+		WtClient:      wtClient,
+		ChainParams:   chainParams,
+		NodeAlias:     nodeAlias,
+		NodePubkey:    route.Vertex(nodeKey),
+		Version:       version,
+		ClientConn:    conn,
+		macaroons:     macaroons,
+		cleanup:       cleanup,
 	}
 
 	log.Infof("Using network %v", cfg.Network)

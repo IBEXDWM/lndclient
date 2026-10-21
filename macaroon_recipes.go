@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	subserverRouter = "routerrpc"
+	rpcEstimateFee  = "EstimateFee"
+)
+
 // recipeMethod identifies a method on one of lndclient's public client
 // interfaces.
 type recipeMethod struct {
@@ -32,15 +37,15 @@ var (
 	// supported by the lndclient library and their implementing interface
 	// type. We use reflection to look up the methods implemented on those
 	// interfaces to find out which permissions are needed for them.
-	supportedSubservers = map[string]interface{}{
-		"lnrpc":       (*LightningClient)(nil),
-		"chainrpc":    (*ChainNotifierClient)(nil),
-		"invoicesrpc": (*InvoicesClient)(nil),
-		"routerrpc":   (*RouterClient)(nil),
-		"signrpc":     (*SignerClient)(nil),
-		"verrpc":      (*VersionerClient)(nil),
-		"walletrpc":   (*WalletKitClient)(nil),
-		"wtclientrpc": (*WatchtowerClientClient)(nil),
+	supportedSubservers = map[string]any{
+		"lnrpc":         (*LightningClient)(nil),
+		"chainrpc":      (*ChainNotifierClient)(nil),
+		"invoicesrpc":   (*InvoicesClient)(nil),
+		subserverRouter: (*RouterClient)(nil),
+		"signrpc":       (*SignerClient)(nil),
+		"verrpc":        (*VersionerClient)(nil),
+		"walletrpc":     (*WalletKitClient)(nil),
+		"wtclientrpc":   (*WatchtowerClientClient)(nil),
 	}
 
 	// renames is a map of renamed RPC method names. The key is the name as
@@ -58,12 +63,12 @@ var (
 		"SubscribeGraph":            "SubscribeChannelGraph",
 		"InterceptHtlcs":            "HtlcInterceptor",
 		"ImportMissionControl":      "XImportMissionControl",
-		"EstimateFeeRate":           "EstimateFee",
-		"EstimateFeeToP2WSH":        "EstimateFee",
+		"EstimateFeeRate":           rpcEstimateFee,
+		"EstimateFeeToP2WSH":        rpcEstimateFee,
 		"EstimateRouteFeeWithProbe": "EstimateRouteFee",
 		"OpenChannelStream":         "OpenChannel",
 		"ListSweepsVerbose":         "ListSweeps",
-		"MinRelayFee":               "EstimateFee",
+		"MinRelayFee":               rpcEstimateFee,
 		"SignOutputRawKeyLocator":   "SignOutputRaw",
 	}
 
@@ -73,8 +78,8 @@ var (
 	// not the proto method name.
 	methodOverrides = map[recipeMethod][]rpcMethod{
 		{"lnrpc", "PayInvoice"}: {
-			{"routerrpc", "Router", "SendPaymentV2"},
-			{"routerrpc", "Router", "TrackPaymentV2"},
+			{subserverRouter, "Router", "SendPaymentV2"},
+			{subserverRouter, "Router", "TrackPaymentV2"},
 		},
 	}
 
@@ -109,11 +114,11 @@ func MacaroonRecipe(c LightningClient, packages []string) ([]MacaroonPermission,
 		// and what methods it declares.
 		ifaceType := reflect.TypeOf(ifacePtr).Elem()
 		serverName := strings.TrimSuffix(ifaceType.Name(), "Client")
-		for i := range ifaceType.NumMethod() {
+		for method := range ifaceType.Methods() {
 			// The methods in lndclient might be called slightly
 			// differently. Rename according to our rename mapping
 			// table.
-			clientMethodName := ifaceType.Method(i).Name
+			clientMethodName := method.Name
 			methodName := clientMethodName
 			rename, ok := renames[methodName]
 			if ok {

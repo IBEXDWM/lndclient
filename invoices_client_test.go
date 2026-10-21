@@ -15,6 +15,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+const fakeMemo = "fake memo"
+
 // testInvoiceRouteHints returns deterministic route hints for invoice tests.
 func testInvoiceRouteHints() [][]zpay32.HopHint {
 	_, pubKey1 := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{1}, 32))
@@ -122,7 +124,7 @@ func TestInvoiceClientAddInvoiceParity(t *testing.T) {
 	copy(validRHash[:], "valid hash")
 
 	sharedInvoice := invoicesrpc.AddInvoiceData{
-		Memo:            "fake memo",
+		Memo:            fakeMemo,
 		Value:           lnwire.MilliSatoshi(500000),
 		DescriptionHash: []byte("fake 32 byte hash"),
 		Expiry:          123,
@@ -192,7 +194,7 @@ func TestInvoicesClientAddHoldInvoiceIgnoresUnsupportedFields(t *testing.T) {
 	copy(validRHash[:], "valid hash")
 
 	invoice := &invoicesrpc.AddInvoiceData{
-		Memo:            "fake memo",
+		Memo:            fakeMemo,
 		Hash:            &validRHash,
 		Value:           lnwire.MilliSatoshi(500000),
 		DescriptionHash: []byte("fake 32 byte hash"),

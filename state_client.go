@@ -141,10 +141,7 @@ func (s *stateClient) SubscribeState(ctx context.Context) (chan WalletState,
 	stateChan := make(chan WalletState, 1)
 	errChan := make(chan error, 1)
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			stateEvent, err := resp.Recv()
 			if err != nil {
@@ -173,7 +170,7 @@ func (s *stateClient) SubscribeState(ctx context.Context) (chan WalletState,
 				return
 			}
 		}
-	}()
+	})
 
 	return stateChan, errChan, nil
 }

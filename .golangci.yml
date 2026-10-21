@@ -53,6 +53,7 @@ linters:
     - errname
     - exhaustive
     - exhaustruct
+    - exhaustruct_v5 # golangci-lint 2.15 ships exhaustruct as exhaustruct_v5
     - forcetypeassert
     - gomoddirectives
     - importas

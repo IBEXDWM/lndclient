@@ -190,9 +190,7 @@ func (s *chainNotifierClient) RegisterSpendNtfn(ctx context.Context,
 		}
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		for {
 			spendEvent, err := resp.Recv()
 			if err != nil {
@@ -232,7 +230,7 @@ func (s *chainNotifierClient) RegisterSpendNtfn(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return spendChan, errChan, nil
 }
@@ -267,10 +265,7 @@ func (s *chainNotifierClient) RegisterConfirmationsNtfn(ctx context.Context,
 	confChan := make(chan *chainntnfs.TxConfirmation, 1)
 	errChan := make(chan error, 1)
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		for {
 			var confEvent *chainrpc.ConfEvent
 			confEvent, err := confStream.Recv()
@@ -354,7 +349,7 @@ func (s *chainNotifierClient) RegisterConfirmationsNtfn(ctx context.Context,
 				return
 			}
 		}
-	}()
+	})
 
 	return confChan, errChan, nil
 }
@@ -373,9 +368,7 @@ func (s *chainNotifierClient) RegisterBlockEpochNtfn(ctx context.Context) (
 	blockEpochChan := make(chan int32)
 
 	// Start block epoch goroutine.
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		for {
 			epoch, err := blockEpochClient.Recv()
 			if err != nil {
@@ -389,7 +382,7 @@ func (s *chainNotifierClient) RegisterBlockEpochNtfn(ctx context.Context) (
 				return
 			}
 		}
-	}()
+	})
 
 	return blockEpochChan, blockErrorChan, nil
 }

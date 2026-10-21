@@ -146,7 +146,7 @@ func TestLightningClientAddInvoice(t *testing.T) {
 	validRPCRouteHints := testRPCRouteHints(t)
 
 	validAddInvoiceData := &invoicesrpc.AddInvoiceData{
-		Memo:            "fake memo",
+		Memo:            fakeMemo,
 		Preimage:        &validPreimage,
 		Value:           lnwire.MilliSatoshi(500000),
 		DescriptionHash: []byte("fake 32 byte hash"),
