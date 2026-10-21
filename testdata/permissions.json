@@ -1000,6 +1000,22 @@
                 }
             ]
         },
+        "/signrpc.Signer/MuSig2RegisterCombinedNonce": {
+            "permissions": [
+                {
+                    "entity": "signer",
+                    "action": "generate"
+                }
+            ]
+        },
+        "/signrpc.Signer/MuSig2GetCombinedNonce": {
+            "permissions": [
+                {
+                    "entity": "signer",
+                    "action": "generate"
+                }
+            ]
+        },
         "/signrpc.Signer/SignMessage": {
             "permissions": [
                 {
@@ -1168,6 +1184,14 @@
                 }
             ]
         },
+        "/walletrpc.WalletKit/RemoveTransaction": {
+            "permissions": [
+                {
+                    "entity": "onchain",
+                    "action": "write"
+                }
+            ]
+        },
         "/walletrpc.WalletKit/PendingSweeps": {
             "permissions": [
                 {
@@ -1177,6 +1201,14 @@
             ]
         },
         "/walletrpc.WalletKit/PublishTransaction": {
+            "permissions": [
+                {
+                    "entity": "onchain",
+                    "action": "write"
+                }
+            ]
+        },
+        "/walletrpc.WalletKit/SubmitPackage": {
             "permissions": [
                 {
                     "entity": "onchain",
